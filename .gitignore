@@ -69,6 +69,15 @@ mlruns/
 tensorboard_logs/
 tb_logs/
 
+# Database files (DuckDB, SQLite, etc.)
+*.duckdb
+*.duckdb.wal
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
 # Jupyter Notebook
 .ipynb_checkpoints/
 *.ipynb_checkpoints

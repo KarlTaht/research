@@ -46,6 +46,24 @@ python tools/download_hf_model.py --repo-id bert-base-uncased
 python tools/download_hf_model.py --repo-id gpt2 --filename pytorch_model.bin
 ```
 
+### Experiment Results Storage
+```bash
+# Query experiment results with SQL
+python tools/query_experiments.py --sql "SELECT * FROM experiments WHERE perplexity < 20"
+
+# List all experiments
+python tools/query_experiments.py --list
+
+# Get summary of all experiments
+python tools/query_experiments.py --summary
+
+# Get top 5 best models by perplexity
+python tools/query_experiments.py --best perplexity --top 5
+
+# Compare specific experiments
+python tools/query_experiments.py --compare exp_001 exp_002
+```
+
 ### Running Experiments
 ```bash
 # From paper directory
@@ -61,15 +79,18 @@ python -m papers.attention_is_all_you_need.train
 ### Monorepo Structure
 - **`common/`**: Shared Python package for reusable code across all papers/projects
   - `models/`: Model architectures
+    - `base.py`: `BaseLanguageModel` - abstract base class for all language models
   - `training/`: Training loops, optimizers, schedulers
+    - `evaluator.py`: `Evaluator` - standard evaluation framework with metrics
   - `data/`: Dataset loaders, HuggingFace utilities (`hf_utils.py`)
-  - `utils/`: Logging, checkpointing, metrics
+  - `utils/`: Logging, checkpointing, metrics, experiment storage
+    - `experiment_storage.py`: Parquet + DuckDB experiment tracking
   - `visualization/`: Plotting and analysis
 
 - **`assets/`**: Centralized storage (GITIGNORED)
   - `datasets/`: Raw and processed datasets
   - `models/`: Pretrained models and checkpoints
-  - `outputs/`: Experiment outputs
+  - `outputs/experiments/`: Experiment results (Parquet files)
 
 - **`papers/[paper-name]/`**: One directory per paper implementation
   - Symlinks to `assets/datasets/` for data (e.g., `data -> ../../assets/datasets/squad`)
@@ -81,6 +102,7 @@ python -m papers.attention_is_all_you_need.train
 - **`tools/`**: Standalone CLI utilities
   - `download_hf_dataset.py`: CLI for downloading HF datasets
   - `download_hf_model.py`: CLI for downloading HF models
+  - `query_experiments.py`: CLI for querying experiment results
   - `test_env.py`: Environment verification
 
 - **`exploratory/`**: Jupyter notebooks and one-off experiments
@@ -92,9 +114,9 @@ Always use absolute imports from `common/`:
 ```python
 # CORRECT
 from common.data import download_dataset, get_datasets_dir, download_model
-from common.models import ResNet, Transformer
-from common.training import Trainer
-from common.utils import save_checkpoint, setup_logger
+from common.models import BaseLanguageModel
+from common.training import Evaluator, compute_perplexity
+from common.utils import save_experiment, query_experiments
 from common.visualization import plot_training_curves
 
 # WRONG - avoid relative imports
@@ -144,14 +166,113 @@ cd ../another_paper
 ln -s ../../assets/datasets/wmt14 data
 ```
 
+### Experiment Storage Architecture
+
+**System**: Parquet (storage) + DuckDB (querying) hybrid
+
+Experiment results are stored as Parquet files for efficient columnar storage, then queried with DuckDB for fast analytics. This provides:
+- Excellent compression (minimal disk space)
+- Fast SQL queries across all experiments
+- Zero data duplication (DuckDB queries Parquet directly)
+- 100% local, works offline
+
+**Programmatic API** (`common/utils/experiment_storage.py`):
+```python
+from common.utils import save_experiment, query_experiments
+
+# Save results
+import pandas as pd
+results = pd.DataFrame({'epoch': [1,2,3], 'perplexity': [25, 18, 15]})
+save_experiment('exp_001', results, metadata={'model': 'llm-tiny'})
+
+# Query with SQL
+best = query_experiments("""
+    SELECT experiment_name, MIN(perplexity) as best_perplexity
+    FROM experiments
+    WHERE epoch >= 5
+    GROUP BY experiment_name
+    ORDER BY best_perplexity LIMIT 5
+""")
+```
+
+**Storage Location**: `assets/outputs/experiments/*.parquet`
+
+### Model and Training Infrastructure
+
+**Base Model Class** (`common/models/base.py`):
+
+All language models should extend `BaseLanguageModel` for consistency:
+
+```python
+from common.models import BaseLanguageModel
+import torch.nn as nn
+
+class MyModel(BaseLanguageModel):
+    def __init__(self, vocab_size, **kwargs):
+        super().__init__(vocab_size, **kwargs)
+        # Your layers here
+
+    def forward(self, input_ids, labels=None):
+        # Your implementation
+        # Must return dict with 'logits' and optionally 'loss'
+        return {'logits': logits, 'loss': loss}
+
+# Inherited methods: generate(), save_checkpoint(), load_checkpoint()
+```
+
+**Evaluation Framework** (`common/training/evaluator.py`):
+
+Standard evaluator for computing metrics:
+
+```python
+from common.training import Evaluator
+
+evaluator = Evaluator(model, device='cuda')
+
+# Evaluate on validation set
+metrics = evaluator.evaluate(val_dataloader)
+# Returns: {'loss': 1.23, 'perplexity': 3.45, 'num_tokens': 10000}
+
+# Generate sample outputs
+samples = evaluator.generate_samples(
+    prompts=['Once upon a time'],
+    tokenizer=tokenizer,
+    max_length=50
+)
+
+# Convert to DataFrame for experiment storage
+results_df = evaluator.create_metrics_dataframe(metrics, epoch=5, split='val')
+```
+
+**Example Project**: `projects/simple_lstm/`
+
+A complete working example demonstrating:
+- LSTM model extending `BaseLanguageModel`
+- Training with `Evaluator` framework
+- Experiment tracking with Parquet storage
+- TinyStories dataset with GPT-2 tokenization
+
+See `projects/simple_lstm/README.md` for full documentation.
+
 ## Key Workflows
 
-### Adding a New Paper Implementation
-1. `mkdir -p papers/paper_name`
-2. Create `train.py`, `evaluate.py`, `config.yaml`, `README.md`
-3. Download dataset: `python tools/download_hf_dataset.py --name dataset_name`
-4. Create symlink: `ln -s ../../assets/datasets/dataset_name papers/paper_name/data`
-5. Import from `common/` and implement
+### Adding a New Paper/Project Implementation
+1. `mkdir -p papers/paper_name` (or `projects/project_name`)
+2. Create model extending `BaseLanguageModel`:
+   ```python
+   from common.models import BaseLanguageModel
+   class MyModel(BaseLanguageModel):
+       def forward(self, input_ids, labels=None):
+           # Implementation
+           return {'logits': logits, 'loss': loss}
+   ```
+3. Create `train.py` using `Evaluator` and `save_experiment()`
+4. Create `evaluate.py` for testing
+5. Create `config.yaml` for hyperparameters
+6. Download dataset: `python tools/download_hf_dataset.py --name dataset_name`
+7. Run training and track experiments
+
+See `projects/simple_lstm/` for a complete working example.
 
 ### Adding Reusable Code to Common
 1. Move code to appropriate `common/` subdirectory

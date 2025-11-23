@@ -1,0 +1,18 @@
+# Configuration for Simple LSTM model
+
+model:
+  embedding_dim: 256
+  hidden_dim: 512
+  num_layers: 2
+  dropout: 0.2
+
+data:
+  max_length: 128
+  use_subset: true      # Use subset for quick testing
+  subset_size: 10000    # Number of training examples to use
+
+training:
+  batch_size: 32
+  learning_rate: 0.001
+  num_epochs: 10
+  save_every: 5         # Save checkpoint every N epochs
