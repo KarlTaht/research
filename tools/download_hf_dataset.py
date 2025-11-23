@@ -28,6 +28,9 @@ Examples:
 
   # Download with config
   python tools/download_hf_dataset.py --name wmt14 --config de-en
+
+  # Download FineWeb sample
+  python tools/download_hf_dataset.py --name HuggingFaceFW/fineweb --config sample-100BT
         """,
     )
 
@@ -69,23 +72,21 @@ Examples:
         output_dir = Path(args.output).expanduser().resolve()
     else:
         output_dir = get_datasets_dir() / args.name
+        # Append config name to output directory if specified
+        if args.config:
+            output_dir = output_dir / args.config
 
     print(f"Downloading dataset: {args.name}")
     print(f"Output directory: {output_dir}")
     print("-" * 50)
 
     try:
-        # Build kwargs for load_dataset
-        kwargs = {}
-        if args.config:
-            kwargs["name"] = args.config
-
         download_dataset(
             name=args.name,
+            config=args.config,
             output_dir=output_dir,
             split=args.split,
             cache_dir=args.cache_dir,
-            **kwargs,
         )
 
         print("-" * 50)

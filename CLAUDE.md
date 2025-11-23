@@ -1,246 +1,28 @@
-# Claude Context: ML Research Monorepo
+# CLAUDE.md
 
-This document provides context about this repository for AI assistants like Claude.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Repository Purpose
+## Repository Overview
 
-This is a **machine learning research monorepo** located at `~/research/` designed for:
-- Implementing and reproducing research papers
-- Conducting original ML research
-- Sharing common code and utilities across projects
-- Managing datasets and models centrally
+ML research monorepo at `~/research/` for implementing papers and conducting original research. Uses centralized assets with symlinks, shared `common/` package for reusable code, and `uv` for fast package management.
 
-## Key Design Decisions
+## Essential Commands
 
-### 1. Monorepo Architecture
-- **Rationale**: Reduce development friction, share code across papers/projects, single dependency environment
-- **Trade-off**: Repository can grow large, but managed through aggressive .gitignore
-- **Pattern**: Common in ML research (Meta FAIR, OpenAI research)
-
-### 2. Centralized Assets with Symlinks
-- **Assets location**: `~/research/assets/{datasets,models,outputs}`
-- **Usage**: Papers/projects symlink to centralized assets to avoid duplication
-- **Why**: Datasets and models are large; storing once saves disk space
-- Example: `papers/my_paper/data -> ../../assets/datasets/imagenet`
-
-### 3. Common Package for Shared Code
-- **Location**: `common/` is a Python package
-- **Structure**:
-  - `common/models/` - Reusable architectures
-  - `common/training/` - Training loops, optimizers
-  - `common/data/` - Dataset loaders, HuggingFace utilities
-  - `common/utils/` - Logging, metrics, checkpointing
-  - `common/visualization/` - Plotting, analysis
-- **Import pattern**: `from common.data import download_dataset`
-
-### 4. Per-Project Docker (Not Root-Level)
-- **Rationale**: Different papers may need different environments
-- **Pattern**: Each paper/project can have its own `docker/` subdirectory
-- **Flexibility**: Use Docker when needed, not mandatory
-
-### 5. Using `uv` Instead of `pip`
-- **Why**: `uv` is 10-100x faster than pip, written in Rust
-- **Commands**: Use `uv venv` and `uv pip install` instead of standard pip
-- **Location**: Virtual environment at `~/research/.venv`
-
-## Directory Structure
-
-```
-~/research/
-├── assets/              # GITIGNORED - Large files stored here
-│   ├── datasets/        # Centralized datasets
-│   ├── models/          # Pretrained models, checkpoints
-│   └── outputs/         # Experiment outputs
-│
-├── common/              # Shared Python package
-│   ├── __init__.py      # Makes it importable
-│   ├── models/
-│   ├── training/
-│   ├── data/            # Includes HuggingFace utilities
-│   ├── utils/
-│   └── visualization/
-│
-├── papers/              # Paper implementations
-│   └── [paper-name]/
-│       ├── README.md
-│       ├── train.py
-│       ├── evaluate.py
-│       ├── config.yaml
-│       ├── docker/      # Optional
-│       └── data -> ../../assets/datasets/X  # Symlink!
-│
-├── projects/            # Original research
-│   └── [project-name]/
-│       ├── README.md
-│       ├── experiments/
-│       ├── notebooks/
-│       └── docker/      # Optional
-│
-├── tools/               # Standalone CLI utilities
-│   ├── download_hf_dataset.py  # CLI for HF datasets
-│   ├── download_hf_model.py    # CLI for HF models
-│   └── test_env.py             # Environment testing
-│
-└── exploratory/         # One-off experiments, notebooks
-    └── [date-or-topic]/
-```
-
-## Important Files
-
-### Configuration
-- **pyproject.toml**: All dependencies for entire monorepo (PyTorch, HF, etc.)
-- **.gitignore**: Comprehensive - ignores assets/, checkpoints, outputs, notebooks checkpoints
-
-### Documentation
-- **README.md**: Main user documentation, setup instructions, workflows
-- **HUGGINGFACE_GUIDE.md**: How to download datasets/models from HuggingFace
-- **CLAUDE.md**: This file - context for AI assistants
-
-### Scripts
-- **tools/download_hf_dataset.py**: CLI for downloading HF datasets to `assets/datasets/`
-- **tools/download_hf_model.py**: CLI for downloading HF models to `assets/models/`
-- **tools/test_env.py**: Tests all dependencies, PyTorch, CUDA, imports
-
-### Core Utilities
-- **common/data/hf_utils.py**: Programmatic HF download functions (used by CLI scripts)
-- **common/data/__init__.py**: Exports `download_dataset`, `download_model`, helper functions
-
-## Environment Setup
-
-### Hardware
-- **GPU**: NVIDIA GeForce RTX 5060 Ti
-- **VRAM**: ~15.4 GiB actual (16,582,574,080 bytes)
-- **CUDA**: 12.8
-- **cuDNN**: Available
-
-### Software
-- **Python**: 3.13.7
-- **Package manager**: `uv` (fast alternative to pip)
-- **Virtual env**: `.venv/` in repository root
-- **Dependencies**: PyTorch 2.9.1+cu128, transformers, datasets, wandb, tensorboard, etc.
-
-### Activation
+### Environment Setup
 ```bash
-cd ~/research
+# Activate virtual environment (ALWAYS do this first)
 source .venv/bin/activate
-```
 
-## Typical Workflows
+# Install dependencies (use uv, not pip)
+uv pip install -e ".[all]"
 
-### Adding a New Paper Implementation
-
-1. Create directory: `papers/paper_name/`
-2. Add files: `README.md`, `train.py`, `evaluate.py`, `config.yaml`
-3. Import from common: `from common.training import Trainer`
-4. Download dataset: `python tools/download_hf_dataset.py --name squad`
-5. Create symlink: `ln -s ../../assets/datasets/squad data`
-6. Implement using shared utilities
-7. Run experiments, document results
-
-### Adding Reusable Code
-
-1. Identify code that could be shared across projects
-2. Move to appropriate `common/` subdirectory
-3. Update `common/[submodule]/__init__.py` if needed
-4. Update imports in papers/projects
-5. Document in docstrings
-
-### Managing Large Files
-
-- **Datasets**: Download to `assets/datasets/`, symlink from papers/projects
-- **Models**: Download to `assets/models/`, load in code
-- **Outputs**: Save to `assets/outputs/` or paper-specific `outputs/`
-- **Never commit**: All assets/ contents are gitignored
-
-## Import Patterns
-
-### Good: Use absolute imports from common
-```python
-from common.data import download_dataset, get_datasets_dir
-from common.models import ResNet, Transformer
-from common.training import Trainer
-from common.utils import save_checkpoint
-```
-
-### Bad: Relative imports or missing common
-```python
-# Don't do this
-from ..common.data import download_dataset
-import sys; sys.path.append('../..')
-```
-
-## HuggingFace Integration
-
-The repository has **dual-use HuggingFace utilities**:
-
-### CLI Usage
-```bash
-python tools/download_hf_dataset.py --name squad
-python tools/download_hf_model.py --repo-id bert-base-uncased
-```
-
-### Programmatic Usage
-```python
-from common.data import download_dataset, download_model
-
-dataset = download_dataset('squad')  # Goes to assets/datasets/
-model = download_model('bert-base-uncased')  # Goes to assets/models/
-```
-
-Both approaches use the same underlying functions in `common/data/hf_utils.py`.
-
-## Git Workflow
-
-### What's Committed
-- Source code (`.py`, `.md`, `.yaml`, etc.)
-- Configuration (`pyproject.toml`, `.gitignore`)
-- Documentation
-- Common package code
-
-### What's Ignored (Never Committed)
-- `assets/` directory (all datasets, models, outputs)
-- `.venv/` virtual environment
-- `*.pt`, `*.pth`, `*.ckpt` checkpoint files
-- `__pycache__/`, `.ipynb_checkpoints/`
-- Experiment logs (`wandb/`, `runs/`, `tensorboard_logs/`)
-
-### Git Status
-- Repository is initialized (`git init` completed)
-- No remote configured yet
-- Ready for initial commit
-
-## Testing the Environment
-
-Run comprehensive environment tests:
-```bash
-source .venv/bin/activate
+# Test environment
 python tools/test_env.py
 ```
 
-Tests verify:
-- Python version (>= 3.10)
-- Core ML packages (NumPy, Pandas, SciPy, scikit-learn)
-- PyTorch + CUDA availability
-- HuggingFace ecosystem
-- Visualization tools
-- Experiment tracking
-- Development tools
-- Common package imports
-
-All tests currently passing.
-
-## Development Tools
-
-### Code Quality
-- **black**: Code formatting (configured in pyproject.toml, line-length=100)
-- **ruff**: Fast linting (configured in pyproject.toml)
-- **mypy**: Type checking (configured, but not strictly enforced)
-- **pytest**: Testing framework (when tests are added)
-- **pre-commit**: Optional git hooks
-
-### Usage
+### Development Commands
 ```bash
-# Format code
+# Format code (line-length=100)
 black .
 
 # Lint
@@ -249,59 +31,146 @@ ruff check .
 # Type check
 mypy common/
 
-# Run tests (when available)
+# Run tests (when added)
 pytest
 ```
 
-## Related Setup
-
-The user previously had an ML project at `~/Development/Setup/ml-project` which served as initial exploration. This new `~/research/` structure is a fresh start with a different, more research-focused organization.
-
-## Helper Commands for Claude
-
-When working in this repository, remember:
-
+### HuggingFace Asset Management
 ```bash
-# Always activate venv first
-source ~/research/.venv/bin/activate
+# Download dataset to assets/datasets/
+python tools/download_hf_dataset.py --name squad
+python tools/download_hf_dataset.py --name wmt14 --split train --config de-en
 
-# Install new dependencies
-uv pip install package-name
-
-# Test environment
-python ~/research/tools/test_env.py
-
-# Download HF dataset
-python ~/research/tools/download_hf_dataset.py --name [dataset]
-
-# Download HF model
-python ~/research/tools/download_hf_model.py --repo-id [model]
+# Download model to assets/models/
+python tools/download_hf_model.py --repo-id bert-base-uncased
+python tools/download_hf_model.py --repo-id gpt2 --filename pytorch_model.bin
 ```
 
-## User Preferences
+### Running Experiments
+```bash
+# From paper directory
+cd papers/attention_is_all_you_need
+python train.py --config config.yaml
 
-Based on interactions:
-- Prefers monorepo for reduced friction
-- Likes centralized assets with symlinks
-- Values comprehensive documentation
-- Uses `uv` for faster package management
-- Wants both CLI and programmatic interfaces for tools
-- Prefers per-project Docker over root-level
+# From repo root
+python -m papers.attention_is_all_you_need.train
+```
 
-## Next Steps (Potential)
+## Architecture
 
-The repository is now set up and ready for:
-1. Adding first paper implementation
-2. Building out `common/` utilities as needed
-3. Creating reusable model architectures
-4. Setting up experiment tracking (wandb/mlflow)
-5. Adding benchmarking utilities
-6. Creating result visualization tools
+### Monorepo Structure
+- **`common/`**: Shared Python package for reusable code across all papers/projects
+  - `models/`: Model architectures
+  - `training/`: Training loops, optimizers, schedulers
+  - `data/`: Dataset loaders, HuggingFace utilities (`hf_utils.py`)
+  - `utils/`: Logging, checkpointing, metrics
+  - `visualization/`: Plotting and analysis
 
-## Notes
+- **`assets/`**: Centralized storage (GITIGNORED)
+  - `datasets/`: Raw and processed datasets
+  - `models/`: Pretrained models and checkpoints
+  - `outputs/`: Experiment outputs
 
-- This is a new machine/setup, migrated from `~/Development/Setup/ml-research`
-- Environment is fully configured and tested
-- All dependencies installed (196 packages)
-- GPU support verified and working
-- Ready for research work
+- **`papers/[paper-name]/`**: One directory per paper implementation
+  - Symlinks to `assets/datasets/` for data (e.g., `data -> ../../assets/datasets/squad`)
+  - Contains `train.py`, `evaluate.py`, `config.yaml`
+
+- **`projects/[project-name]/`**: Original research projects
+  - Similar structure to papers but with more flexibility
+
+- **`tools/`**: Standalone CLI utilities
+  - `download_hf_dataset.py`: CLI for downloading HF datasets
+  - `download_hf_model.py`: CLI for downloading HF models
+  - `test_env.py`: Environment verification
+
+- **`exploratory/`**: Jupyter notebooks and one-off experiments
+
+### Import Patterns
+
+Always use absolute imports from `common/`:
+
+```python
+# CORRECT
+from common.data import download_dataset, get_datasets_dir, download_model
+from common.models import ResNet, Transformer
+from common.training import Trainer
+from common.utils import save_checkpoint, setup_logger
+from common.visualization import plot_training_curves
+
+# WRONG - avoid relative imports
+from ..common.data import download_dataset
+```
+
+### HuggingFace Integration Architecture
+
+Dual-use system for downloading datasets/models:
+
+1. **CLI scripts** (`tools/download_hf_*.py`): For manual downloads
+2. **Programmatic API** (`common/data/hf_utils.py`): For use in training scripts
+
+Both use the same underlying functions:
+- CLI scripts call functions from `common/data/hf_utils.py`
+- Training scripts can import directly from `common.data`
+
+```python
+# In training scripts
+from common.data import download_dataset, download_model, get_datasets_dir
+
+# Download on demand
+dataset = download_dataset('squad')  # Goes to assets/datasets/ by default
+model_path = download_model('bert-base-uncased')
+
+# Or load pre-downloaded data
+from datasets import load_from_disk
+dataset = load_from_disk(get_datasets_dir() / 'squad')
+```
+
+### Asset Management Pattern
+
+Large files (datasets, models, outputs) are:
+1. Stored centrally in `assets/` directory
+2. GITIGNORED (never committed)
+3. Symlinked from papers/projects to avoid duplication
+
+```bash
+# Download once
+python tools/download_hf_dataset.py --name wmt14
+
+# Use in multiple papers via symlinks
+cd papers/transformer_paper
+ln -s ../../assets/datasets/wmt14 data
+
+cd ../another_paper
+ln -s ../../assets/datasets/wmt14 data
+```
+
+## Key Workflows
+
+### Adding a New Paper Implementation
+1. `mkdir -p papers/paper_name`
+2. Create `train.py`, `evaluate.py`, `config.yaml`, `README.md`
+3. Download dataset: `python tools/download_hf_dataset.py --name dataset_name`
+4. Create symlink: `ln -s ../../assets/datasets/dataset_name papers/paper_name/data`
+5. Import from `common/` and implement
+
+### Adding Reusable Code to Common
+1. Move code to appropriate `common/` subdirectory
+2. Update `common/[submodule]/__init__.py` to export it
+3. Update imports in papers/projects
+4. Document with docstrings
+
+### Environment Details
+- **Python**: 3.13.7 (requires >= 3.10)
+- **GPU**: NVIDIA RTX 5060 Ti, ~15.4 GiB VRAM
+- **CUDA**: 12.8
+- **PyTorch**: 2.9.1+cu128
+- **Package Manager**: `uv` (10-100x faster than pip)
+
+## Important Notes
+
+- **Never commit** `assets/`, checkpoints (`.pt`, `.pth`, `.ckpt`), or experiment logs
+- **Always activate** `.venv` before running any Python commands
+- **Use `uv`** instead of `pip` for installing packages
+- **Use symlinks** to share datasets across papers/projects
+- **Per-project Docker**: Each paper/project can have its own `docker/` subdirectory (not root-level)
+- **Line length**: 100 characters (black/ruff configured)
