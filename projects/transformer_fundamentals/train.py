@@ -107,30 +107,42 @@ def prepare_dataset(config: dict, tokenizer):
     return tokenized_dataset
 
 
-def collate_fn(batch):
-    """Custom collate function to pad sequences to same length in batch."""
-    # Find max length in batch
-    max_len = max(len(item['input_ids']) for item in batch)
+def create_collate_fn(pad_token_id: int):
+    """Create a collate function with the specified pad token ID.
 
-    input_ids_list = []
-    labels_list = []
+    Args:
+        pad_token_id: Token ID to use for padding (should match model's pad_token_id)
 
-    for item in batch:
-        input_ids = item['input_ids']
-        labels = item['labels']
+    Returns:
+        Collate function for DataLoader
+    """
+    def collate_fn(batch):
+        """Custom collate function to pad sequences to same length in batch."""
+        # Find max length in batch
+        max_len = max(len(item['input_ids']) for item in batch)
 
-        # Pad to max_len with 0 (pad token)
-        padding_len = max_len - len(input_ids)
-        input_ids = input_ids + [0] * padding_len
-        labels = labels + [0] * padding_len
+        input_ids_list = []
+        labels_list = []
 
-        input_ids_list.append(input_ids)
-        labels_list.append(labels)
+        for item in batch:
+            input_ids = item['input_ids']
+            labels = item['labels']
 
-    return {
-        'input_ids': torch.tensor(input_ids_list, dtype=torch.long),
-        'labels': torch.tensor(labels_list, dtype=torch.long)
-    }
+            # Pad to max_len with pad_token_id
+            # IMPORTANT: Must use the same pad_token_id as model.criterion's ignore_index
+            padding_len = max_len - len(input_ids)
+            input_ids = input_ids + [pad_token_id] * padding_len
+            labels = labels + [pad_token_id] * padding_len
+
+            input_ids_list.append(input_ids)
+            labels_list.append(labels)
+
+        return {
+            'input_ids': torch.tensor(input_ids_list, dtype=torch.long),
+            'labels': torch.tensor(labels_list, dtype=torch.long)
+        }
+
+    return collate_fn
 
 
 def train_epoch(model, train_loader, optimizer, device, gradient_clip):
@@ -190,6 +202,10 @@ def main():
 
     # Load and preprocess dataset
     tokenized_dataset = prepare_dataset(config, tokenizer)
+
+    # Create collate function with correct pad token
+    # IMPORTANT: pad_token_id must match model's criterion ignore_index
+    collate_fn = create_collate_fn(pad_token_id=tokenizer.pad_token_id)
 
     # Create dataloaders
     train_loader = DataLoader(
