@@ -12,18 +12,34 @@ class BaseLanguageModel(nn.Module, ABC):
 
     All language models in this repository should extend this class
     to ensure consistent interface for training, evaluation, and inference.
+
+    Subclasses must implement:
+        - forward(): Model forward pass
+        - get_model_info(): Return model metadata for logging
+
+    Subclasses may override:
+        - generate(): Text generation (default implementation for decoder-only)
+        - _init_weights(): Weight initialization
     """
 
-    def __init__(self, vocab_size: int, **kwargs):
+    def __init__(
+        self,
+        vocab_size: int,
+        is_encoder_decoder: bool = False,
+        **kwargs
+    ):
         """
         Initialize base language model.
 
         Args:
             vocab_size: Size of the vocabulary
+            is_encoder_decoder: Whether this is an encoder-decoder model.
+                If True, generate() will raise NotImplementedError unless overridden.
             **kwargs: Additional model-specific arguments
         """
         super().__init__()
         self.vocab_size = vocab_size
+        self.is_encoder_decoder = is_encoder_decoder
         self.model_config = kwargs
 
     @abstractmethod
@@ -44,6 +60,26 @@ class BaseLanguageModel(nn.Module, ABC):
         """
         pass
 
+    @abstractmethod
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get model information for logging.
+
+        Returns:
+            Dictionary containing at least:
+                - 'model_type': str - Name of the model architecture
+                - 'vocab_size': int - Vocabulary size
+                - 'parameters': int - Number of trainable parameters
+        """
+        pass
+
+    def _init_weights(self) -> None:
+        """Initialize model weights.
+
+        Override this method in subclasses to provide custom initialization.
+        Called automatically if defined in subclass __init__.
+        """
+        pass
+
     @torch.no_grad()
     def generate(
         self,
@@ -51,19 +87,34 @@ class BaseLanguageModel(nn.Module, ABC):
         max_length: int = 100,
         temperature: float = 1.0,
         top_k: Optional[int] = None,
+        eos_token_id: Optional[int] = None,
     ) -> torch.Tensor:
         """
         Generate text autoregressively.
+
+        This default implementation is for decoder-only models. Encoder-decoder
+        models should override this method with their own generation logic.
 
         Args:
             input_ids: Starting token IDs [batch_size, seq_len]
             max_length: Maximum generation length
             temperature: Sampling temperature (higher = more random)
             top_k: If set, only sample from top k tokens
+            eos_token_id: If set, stop generation when this token is produced
 
         Returns:
-            Generated token IDs [batch_size, max_length]
+            Generated token IDs [batch_size, generated_length]
+
+        Raises:
+            NotImplementedError: If called on an encoder-decoder model that
+                hasn't overridden this method.
         """
+        if self.is_encoder_decoder:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} is an encoder-decoder model. "
+                "Override generate() with architecture-specific generation logic."
+            )
+
         self.eval()
         batch_size = input_ids.size(0)
         device = input_ids.device
@@ -93,6 +144,11 @@ class BaseLanguageModel(nn.Module, ABC):
             # Append to generated sequence
             generated = torch.cat([generated, next_token], dim=1)
 
+            # Check for EOS token
+            if eos_token_id is not None:
+                if (next_token == eos_token_id).all():
+                    break
+
         return generated
 
     def save_checkpoint(
@@ -118,6 +174,8 @@ class BaseLanguageModel(nn.Module, ABC):
             "model_state_dict": self.state_dict(),
             "model_config": self.model_config,
             "vocab_size": self.vocab_size,
+            "is_encoder_decoder": self.is_encoder_decoder,
+            "model_class": self.__class__.__name__,
         }
 
         if optimizer is not None:
@@ -161,6 +219,59 @@ class BaseLanguageModel(nn.Module, ABC):
             "model_config": checkpoint.get("model_config"),
         }
 
+    @classmethod
+    def from_checkpoint(
+        cls,
+        path: Union[str, Path],
+        device: Optional[Union[str, torch.device]] = None,
+        **override_kwargs
+    ) -> "BaseLanguageModel":
+        """
+        Reconstruct model from a checkpoint file.
+
+        This class method creates a new model instance and loads the saved
+        state dict. Use this when you want to load a model without having
+        to manually specify all constructor arguments.
+
+        Args:
+            path: Path to checkpoint file
+            device: Device to load model onto (default: CPU)
+            **override_kwargs: Arguments to override from saved config
+
+        Returns:
+            Loaded model instance
+
+        Example:
+            >>> model = SimpleLSTM.from_checkpoint("model.pt")
+            >>> model = SimpleLSTM.from_checkpoint("model.pt", device="cuda")
+        """
+        path = Path(path)
+        checkpoint = torch.load(path, map_location=device or "cpu")
+
+        # Build constructor arguments from checkpoint
+        config = checkpoint.get("model_config", {}).copy()
+        config.update(override_kwargs)
+
+        # Handle is_encoder_decoder for backwards compatibility
+        is_encoder_decoder = checkpoint.get("is_encoder_decoder", False)
+
+        # Create model instance
+        model = cls(
+            vocab_size=checkpoint["vocab_size"],
+            is_encoder_decoder=is_encoder_decoder,
+            **config
+        )
+
+        # Load state dict
+        model.load_state_dict(checkpoint["model_state_dict"])
+
+        # Move to device if specified
+        if device is not None:
+            model = model.to(device)
+
+        print(f"✓ Model loaded from checkpoint: {path}")
+        return model
+
     def count_parameters(self) -> int:
         """Count the number of trainable parameters."""
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -169,5 +280,6 @@ class BaseLanguageModel(nn.Module, ABC):
         """Get model configuration as dictionary."""
         return {
             "vocab_size": self.vocab_size,
+            "is_encoder_decoder": self.is_encoder_decoder,
             **self.model_config,
         }

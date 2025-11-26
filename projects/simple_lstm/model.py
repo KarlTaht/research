@@ -2,7 +2,7 @@
 
 import torch
 import torch.nn as nn
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 import sys
 from pathlib import Path
 
@@ -123,7 +123,7 @@ class SimpleLSTM(BaseLanguageModel):
 
         return output
 
-    def get_model_info(self) -> Dict[str, any]:
+    def get_model_info(self) -> Dict[str, Any]:
         """Get model information for logging."""
         return {
             "model_type": "SimpleLSTM",
@@ -132,5 +132,5 @@ class SimpleLSTM(BaseLanguageModel):
             "hidden_dim": self.model_config["hidden_dim"],
             "num_layers": self.model_config["num_layers"],
             "dropout": self.model_config["dropout"],
-            "num_parameters": self.count_parameters(),
+            "parameters": self.count_parameters(),
         }

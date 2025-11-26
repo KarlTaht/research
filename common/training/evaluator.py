@@ -109,6 +109,10 @@ class Evaluator:
         """
         Generate text samples from prompts.
 
+        Note: This method works with decoder-only models. For encoder-decoder
+        models, use a model-specific generation method or pass a custom
+        generate function.
+
         Args:
             prompts: List of text prompts
             tokenizer: Tokenizer for encoding/decoding
@@ -118,9 +122,28 @@ class Evaluator:
 
         Returns:
             List of dicts with 'prompt' and 'generated' keys
+
+        Raises:
+            NotImplementedError: If the model is encoder-decoder and doesn't
+                have a custom generate() method.
         """
         self.model.eval()
         samples = []
+
+        # Check if model is encoder-decoder
+        is_encoder_decoder = getattr(self.model, "is_encoder_decoder", False)
+        if is_encoder_decoder:
+            # Check if model has overridden generate()
+            try:
+                # Try calling generate with a dummy input to see if it's implemented
+                dummy_input = tokenizer.encode(prompts[0], return_tensors="pt").to(self.device)
+                self.model.generate(dummy_input, max_length=1)
+            except NotImplementedError:
+                raise NotImplementedError(
+                    f"Model {self.model.__class__.__name__} is an encoder-decoder model "
+                    "without a custom generate() method. Use a model-specific generation "
+                    "function or implement generate() in the model class."
+                )
 
         for prompt in prompts:
             # Tokenize prompt

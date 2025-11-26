@@ -1,7 +1,7 @@
 """Reference implementation of encoder-decoder Transformer model."""
 
 import math
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 import torch
 import torch.nn as nn
 
@@ -70,6 +70,7 @@ class ReferenceTransformer(BaseLanguageModel):
         # Pass all model hyperparameters to parent so they get saved in model_config
         super().__init__(
             vocab_size,
+            is_encoder_decoder=True,  # This is an encoder-decoder model
             d_model=d_model,
             n_heads=n_heads,
             n_encoder_layers=n_encoder_layers,
@@ -292,9 +293,10 @@ class ReferenceTransformer(BaseLanguageModel):
             'loss': loss
         }
 
-    def get_model_info(self) -> Dict[str, any]:
+    def get_model_info(self) -> Dict[str, Any]:
         """Get model configuration information."""
         return {
+            'model_type': 'ReferenceTransformer',
             'architecture': 'Encoder-Decoder Transformer (Reference Implementation)',
             'vocab_size': self.vocab_size,
             'd_model': self.d_model,
