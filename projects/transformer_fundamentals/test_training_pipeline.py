@@ -22,17 +22,19 @@ from common.models import ReferenceTransformer
 
 @pytest.fixture
 def tokenizer():
-    """GPT-2 tokenizer with pad token set."""
+    """GPT-2 tokenizer with pad token and SEP token set."""
     tok = GPT2TokenizerFast.from_pretrained('gpt2')
     tok.pad_token = tok.eos_token
+    # Add dedicated SEP token to avoid collision with EOS
+    tok.add_special_tokens({'sep_token': '<|sep|>'})
     return tok
 
 
 @pytest.fixture
-def model_config():
+def model_config(tokenizer):
     """Minimal model config for testing."""
     return {
-        'vocab_size': 50257,
+        'vocab_size': len(tokenizer),  # Include added SEP token
         'd_model': 64,
         'n_heads': 4,
         'n_encoder_layers': 1,
@@ -45,8 +47,9 @@ def model_config():
 
 @pytest.fixture
 def model(tokenizer, model_config):
-    """Small model for testing."""
+    """Small model for testing with proper SEP token."""
     return ReferenceTransformer(
+        sep_token_id=tokenizer.sep_token_id,  # Use tokenizer's SEP token
         pad_token_id=tokenizer.pad_token_id,
         **model_config
     )

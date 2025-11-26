@@ -19,10 +19,20 @@ from projects.transformer_fundamentals.evaluate import (
 
 
 @pytest.fixture
-def small_model_config():
+def tokenizer():
+    """GPT2 tokenizer for testing with proper SEP token."""
+    tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
+    tokenizer.pad_token = tokenizer.eos_token
+    # Add dedicated SEP token to avoid collision with EOS
+    tokenizer.add_special_tokens({'sep_token': '<|sep|>'})
+    return tokenizer
+
+
+@pytest.fixture
+def small_model_config(tokenizer):
     """Small model config for testing."""
     return {
-        'vocab_size': 50257,
+        'vocab_size': len(tokenizer),  # Include added SEP token
         'd_model': 64,
         'n_heads': 4,
         'n_encoder_layers': 2,
@@ -30,15 +40,9 @@ def small_model_config():
         'd_ff': 128,
         'dropout': 0.1,
         'max_seq_len': 128,
+        'sep_token_id': tokenizer.sep_token_id,  # Use tokenizer's SEP token
+        'pad_token_id': tokenizer.pad_token_id,
     }
-
-
-@pytest.fixture
-def tokenizer():
-    """GPT2 tokenizer for testing."""
-    tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
-    tokenizer.pad_token = tokenizer.eos_token
-    return tokenizer
 
 
 def create_checkpoint(model_config, include_model_config=True, training_config=None):

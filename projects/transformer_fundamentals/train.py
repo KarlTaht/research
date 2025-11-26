@@ -51,8 +51,16 @@ def prepare_dataset(config: dict, tokenizer):
     dataset = load_from_disk(dataset_path)
     print(f"Dataset loaded: {dataset}")
 
-    # Get SEP token ID (last token in vocab)
-    sep_token_id = config['model']['vocab_size'] - 1
+    # Get SEP token ID from tokenizer (must be added before calling this function)
+    # CRITICAL: Do NOT use vocab_size-1 as SEP - it collides with EOS in GPT-2!
+    sep_token_id = tokenizer.sep_token_id
+    if sep_token_id is None:
+        raise ValueError(
+            "Tokenizer has no SEP token. Add one with: "
+            "tokenizer.add_special_tokens({'sep_token': '<|sep|>'})"
+        )
+    print(f"Using SEP token ID: {sep_token_id}")
+
     max_dialogue_len = config['data']['max_dialogue_length']
     max_summary_len = config['data']['max_summary_length']
 
@@ -194,11 +202,17 @@ def main():
     # Set random seed
     torch.manual_seed(config['training']['seed'])
 
-    # Initialize tokenizer
+    # Initialize tokenizer with special tokens for encoder-decoder
     print("Initializing GPT-2 tokenizer...")
     tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
     tokenizer.pad_token = tokenizer.eos_token
-    print(f"Vocab size: {len(tokenizer)}")
+
+    # Add dedicated SEP token for source/target separation
+    # CRITICAL: Using vocab_size-1 or EOS as SEP causes token collisions!
+    # Adding a new token ensures SEP is distinct from PAD and EOS.
+    special_tokens = {'sep_token': '<|sep|>'}
+    num_added = tokenizer.add_special_tokens(special_tokens)
+    print(f"Added {num_added} special tokens. Vocab size: {len(tokenizer)}")
 
     # Load and preprocess dataset
     tokenized_dataset = prepare_dataset(config, tokenizer)
@@ -222,10 +236,11 @@ def main():
         collate_fn=collate_fn
     )
 
-    # Initialize model
+    # Initialize model with correct vocab size (including added SEP token)
     print("Initializing ReferenceTransformer...")
+    actual_vocab_size = len(tokenizer)  # Includes added SEP token
     model = ReferenceTransformer(
-        vocab_size=config['model']['vocab_size'],
+        vocab_size=actual_vocab_size,
         d_model=config['model']['d_model'],
         n_heads=config['model']['n_heads'],
         n_encoder_layers=config['model']['n_encoder_layers'],
@@ -233,6 +248,7 @@ def main():
         d_ff=config['model']['d_ff'],
         dropout=config['model']['dropout'],
         max_seq_len=config['model']['max_seq_len'],
+        sep_token_id=tokenizer.sep_token_id,  # Use tokenizer's SEP token
         pad_token_id=tokenizer.pad_token_id
     )
 

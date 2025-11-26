@@ -112,12 +112,28 @@ def generate_summary(
 ):
     """Generate summary for a dialogue using the encoder-decoder model.
 
+    This function generates text autoregressively, matching the training format:
+    Training format: [dialogue_tokens] [SEP] [summary_tokens]
+
+    The model was trained with teacher forcing where:
+    - Input: [dialogue] [SEP] [summary_tok_1, ..., summary_tok_n]
+    - The model learns to predict summary_tok_{i+1} given everything up to summary_tok_i
+
+    For generation, we start with just [dialogue] [SEP] and iteratively:
+    1. Get the model's prediction for the next token
+    2. Append that token to our sequence
+    3. Repeat until EOS or max_length
+
+    IMPORTANT: We do NOT use a BOS token because training didn't use one.
+    The first generated token is predicted from [dialogue] [SEP] with an empty target,
+    but we need at least one target token for the model architecture.
+
     Args:
         model: ReferenceTransformer model
-        tokenizer: Tokenizer
+        tokenizer: Tokenizer (must have sep_token if model uses tokenizer's SEP)
         dialogue: Input dialogue text
         max_length: Maximum summary length
-        temperature: Sampling temperature
+        temperature: Sampling temperature (lower = more deterministic)
         device: Device to run on
 
     Returns:
@@ -128,24 +144,49 @@ def generate_summary(
     # Tokenize dialogue (source)
     dialogue_ids = tokenizer.encode(dialogue, add_special_tokens=False)
 
-    # Get SEP token ID
+    # Get SEP token ID from model (was set during training)
     sep_token_id = model.sep_token_id
 
-    # For encoder-decoder generation, we need to seed the target with a BOS token
-    # We'll use the EOS token as BOS (common practice)
-    bos_token_id = tokenizer.eos_token_id
+    # Verify SEP token is not EOS (would indicate the bug we're fixing)
+    if sep_token_id == tokenizer.eos_token_id:
+        raise ValueError(
+            f"Model's SEP token ({sep_token_id}) equals EOS token. "
+            "This model was trained with the token collision bug. "
+            "Please retrain with a proper SEP token."
+        )
 
-    # Start with BOS token as the seed for generation
-    generated_summary_ids = [bos_token_id]
+    # Start with empty target - we'll bootstrap by getting the first token prediction
+    # The model needs at least one target token for the decoder, so we use a
+    # "primer" approach: sample the first token, then continue autoregressively.
+    generated_summary_ids = []
 
     with torch.no_grad():
-        for _ in range(max_length):
-            # Current input: [dialogue] [SEP] [generated_so_far]
-            current_input = dialogue_ids + [sep_token_id] + generated_summary_ids
+        for step in range(max_length):
+            # Build current input: [dialogue] [SEP] [generated_so_far]
+            if len(generated_summary_ids) == 0:
+                # For the first token, we need to give the decoder something.
+                # Use a dummy token that we'll predict over. We'll use the first
+                # token's logits to predict what the actual first token should be.
+                # This is a quirk of how the model was designed - it expects target tokens.
+                #
+                # Alternative: use a "start" token. But since training didn't use one,
+                # we'll sample from the distribution given an arbitrary primer.
+                # Use a common starting token like space (token for ' ')
+                primer_token = tokenizer.encode(' ', add_special_tokens=False)[0]
+                current_target = [primer_token]
+            else:
+                current_target = generated_summary_ids
 
-            # Truncate if too long
+            current_input = dialogue_ids + [sep_token_id] + current_target
+
+            # Truncate dialogue if total sequence too long
             if len(current_input) > model.max_seq_len:
-                break
+                # Truncate dialogue to fit
+                max_dialogue = model.max_seq_len - len(current_target) - 1  # -1 for SEP
+                if max_dialogue < 10:
+                    break  # Can't fit meaningful dialogue
+                dialogue_ids = dialogue_ids[:max_dialogue]
+                current_input = dialogue_ids + [sep_token_id] + current_target
 
             current_input_tensor = torch.tensor([current_input], dtype=torch.long).to(device)
 
@@ -153,26 +194,31 @@ def generate_summary(
             outputs = model(current_input_tensor)
             logits = outputs['logits']  # [1, target_len, vocab_size]
 
-            # Get logits for last generated token (in target sequence)
-            last_token_logits = logits[0, -1, :]  # [vocab_size]
+            # Get logits for next token prediction
+            # Due to shifted training, logits[i] predicts token at position i+1
+            # So logits[-1] predicts what comes after the last token in current_target
+            next_token_logits = logits[0, -1, :]  # [vocab_size]
 
             # Apply temperature
-            last_token_logits = last_token_logits / temperature
+            if temperature != 1.0:
+                next_token_logits = next_token_logits / temperature
 
             # Sample from distribution
-            probs = torch.softmax(last_token_logits, dim=-1)
+            probs = torch.softmax(next_token_logits, dim=-1)
             next_token = torch.multinomial(probs, num_samples=1).item()
 
-            # Stop if we generate EOS or pad token
-            if next_token in [tokenizer.eos_token_id, tokenizer.pad_token_id]:
+            # Stop if we generate EOS, pad, or SEP token
+            if next_token in [tokenizer.eos_token_id, tokenizer.pad_token_id, sep_token_id]:
                 break
 
             generated_summary_ids.append(next_token)
 
-    # Decode generated summary (skip the initial BOS token)
-    summary = tokenizer.decode(generated_summary_ids[1:], skip_special_tokens=True)
+    # Decode generated summary
+    if len(generated_summary_ids) == 0:
+        return ""
 
-    return summary
+    summary = tokenizer.decode(generated_summary_ids, skip_special_tokens=True)
+    return summary.strip()
 
 
 def main():

@@ -1,7 +1,9 @@
 # Configuration for ReferenceTransformer training on SAMSum
 
 model:
-  vocab_size: 50257  # GPT-2 tokenizer vocab size
+  # NOTE: vocab_size is overridden at runtime after adding SEP token
+  # The actual vocab size will be 50258 (50257 GPT-2 + 1 SEP token)
+  vocab_size: 50257  # Base GPT-2 tokenizer vocab size (before adding SEP)
   d_model: 256        # Model dimension (reduced for faster training)
   n_heads: 8          # Number of attention heads
   n_encoder_layers: 4 # Encoder depth (reduced from paper's 6)
