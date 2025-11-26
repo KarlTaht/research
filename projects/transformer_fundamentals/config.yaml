@@ -6,7 +6,7 @@ model:
   n_heads: 8          # Number of attention heads
   n_encoder_layers: 4 # Encoder depth (reduced from paper's 6)
   n_decoder_layers: 4 # Decoder depth (reduced from paper's 6)
-  d_ff: 1024          # Feed-forward hidden dimension (4 * d_model)
+  d_ff: 512           # Feed-forward hidden dimension (4 * d_model)
   dropout: 0.1        # Dropout probability
   max_seq_len: 512    # Maximum sequence length
 

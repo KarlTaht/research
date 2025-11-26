@@ -279,7 +279,8 @@ def main():
                 checkpoint_path,
                 optimizer=optimizer,
                 epoch=epoch,
-                loss=val_metrics['loss']
+                loss=val_metrics['loss'],
+                training_config=config  # Save full training config
             )
             print(f"Checkpoint saved: {checkpoint_path}")
 
@@ -289,7 +290,8 @@ def main():
         final_checkpoint,
         optimizer=optimizer,
         epoch=config['training']['num_epochs'],
-        loss=results[-1]['val_loss']
+        loss=results[-1]['val_loss'],
+        training_config=config  # Save full training config
     )
     print(f"\nFinal checkpoint saved: {final_checkpoint}")
 

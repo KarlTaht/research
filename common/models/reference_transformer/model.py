@@ -67,7 +67,20 @@ class ReferenceTransformer(BaseLanguageModel):
         pad_token_id: int = 0,
         **kwargs
     ):
-        super().__init__(vocab_size, **kwargs)
+        # Pass all model hyperparameters to parent so they get saved in model_config
+        super().__init__(
+            vocab_size,
+            d_model=d_model,
+            n_heads=n_heads,
+            n_encoder_layers=n_encoder_layers,
+            n_decoder_layers=n_decoder_layers,
+            d_ff=d_ff,
+            dropout=dropout,
+            max_seq_len=max_seq_len,
+            sep_token_id=sep_token_id if sep_token_id is not None else vocab_size - 1,
+            pad_token_id=pad_token_id,
+            **kwargs
+        )
 
         self.d_model = d_model
         self.n_heads = n_heads
@@ -259,12 +272,19 @@ class ReferenceTransformer(BaseLanguageModel):
                 tgt_len = len(tgt_labels_list[i])
                 tgt_labels[i, :tgt_len] = tgt_labels_list[i]
 
+            # CRITICAL: Shift labels to align with autoregressive prediction
+            # logits[:, i] should predict labels[:, i+1] (next token prediction)
+            # So we compare logits[:, :-1] with labels[:, 1:]
+            # This ensures position i predicts the token at position i+1
+            shift_logits = logits[:, :-1, :].contiguous()  # Remove last position
+            shift_labels = tgt_labels[:, 1:].contiguous()  # Remove first position
+
             # Reshape for CrossEntropyLoss
-            # logits: [batch * tgt_seq_len, vocab_size]
-            # labels: [batch * tgt_seq_len]
+            # shift_logits: [batch * (tgt_seq_len-1), vocab_size]
+            # shift_labels: [batch * (tgt_seq_len-1)]
             loss = self.criterion(
-                logits.reshape(-1, self.vocab_size),
-                tgt_labels.reshape(-1)
+                shift_logits.reshape(-1, self.vocab_size),
+                shift_labels.reshape(-1)
             )
 
         return {
