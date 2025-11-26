@@ -18,7 +18,7 @@ data:
   # subset_size: 1000       # Uncomment for quick testing
 
 training:
-  batch_size: 16          # Batch size (adjust based on GPU memory)
+  batch_size: 8           # Batch size (reduced for 16GB VRAM)
   learning_rate: 0.0001   # Learning rate (1e-4)
   num_epochs: 10          # Number of training epochs
   gradient_clip: 1.0      # Gradient clipping max norm
