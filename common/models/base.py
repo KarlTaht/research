@@ -96,7 +96,11 @@ class BaseLanguageModel(nn.Module, ABC):
         return generated
 
     def save_checkpoint(
-        self, path: Union[str, Path], optimizer: Optional[Any] = None, epoch: Optional[int] = None
+        self,
+        path: Union[str, Path],
+        optimizer: Optional[Any] = None,
+        epoch: Optional[int] = None,
+        **kwargs
     ):
         """
         Save model checkpoint.
@@ -105,6 +109,7 @@ class BaseLanguageModel(nn.Module, ABC):
             path: Path to save checkpoint
             optimizer: Optional optimizer state to save
             epoch: Optional epoch number
+            **kwargs: Additional metadata to save (e.g., loss, metrics)
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,6 +125,10 @@ class BaseLanguageModel(nn.Module, ABC):
 
         if epoch is not None:
             checkpoint["epoch"] = epoch
+
+        # Add any additional metadata
+        for key, value in kwargs.items():
+            checkpoint[key] = value
 
         torch.save(checkpoint, path)
         print(f"✓ Checkpoint saved: {path}")
