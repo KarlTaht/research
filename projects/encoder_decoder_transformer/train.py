@@ -6,7 +6,7 @@ by training on the SAMSum dataset (dialogue → summary pairs).
 
 Usage:
     python train.py --config config.yaml
-    python -m projects.transformer_fundamentals.train
+    python -m projects.encoder_decoder_transformer.train
 """
 
 import argparse

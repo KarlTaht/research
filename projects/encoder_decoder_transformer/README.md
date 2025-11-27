@@ -1,4 +1,4 @@
-# Transformer Fundamentals
+# Encoder-Decoder Transformer
 
 Validation project for the **ReferenceTransformer** - a pure tensor operation implementation of the encoder-decoder Transformer architecture from "Attention Is All You Need" (Vaswani et al., 2017).
 
@@ -51,7 +51,7 @@ python tools/download_hf_dataset.py --name samsum
 ### 2. Create Data Symlink
 
 ```bash
-cd projects/transformer_fundamentals
+cd projects/encoder_decoder_transformer
 ln -s ../../assets/datasets/samsum data
 ```
 
@@ -70,14 +70,14 @@ source .venv/bin/activate
 python train.py --config config.yaml
 
 # Or from repo root
-python -m projects.transformer_fundamentals.train
+python -m projects.encoder_decoder_transformer.train
 ```
 
 ### Evaluation
 
 ```bash
 # Load checkpoint and generate summaries
-python evaluate.py --checkpoint ../assets/models/transformer_fundamentals_epoch_10.pt
+python evaluate.py --checkpoint ../assets/models/encoder_decoder_transformer_epoch_10.pt
 
 # Evaluate on specific split
 python evaluate.py --checkpoint <path> --split test
@@ -146,12 +146,16 @@ See `FUTURE_EXPERIMENTS.md` for planned experiments:
 ## Project Structure
 
 ```
-projects/transformer_fundamentals/
+projects/encoder_decoder_transformer/
 ├── README.md                    # This file
 ├── FUTURE_EXPERIMENTS.md        # Future experiment ideas
 ├── config.yaml                  # Hyperparameters
 ├── train.py                     # Training script
 ├── evaluate.py                  # Evaluation script
+├── tests/                       # Test suite
+│   ├── test_evaluate.py         # Checkpoint loading tests
+│   ├── test_training_pipeline.py # Training pipeline tests
+│   └── test_tokenization_encoding.py # Tokenization and encoding tests
 └── data -> ../../assets/datasets/samsum  # Dataset symlink
 ```
 

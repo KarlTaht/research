@@ -9,8 +9,11 @@ import torch
 import sys
 from pathlib import Path
 
-# Add repo root to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# Add repo root and project directory to path
+repo_root = Path(__file__).parent.parent.parent
+project_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(repo_root))
+sys.path.insert(0, str(project_dir))
 
 from transformers import GPT2TokenizerFast
 from common.models import ReferenceTransformer

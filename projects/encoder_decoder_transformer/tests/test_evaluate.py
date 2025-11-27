@@ -8,14 +8,14 @@ import torch
 import pytest
 from transformers import GPT2TokenizerFast
 
-# Add repo root to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# Add repo root and project directory to path
+repo_root = Path(__file__).parent.parent.parent
+project_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(repo_root))
+sys.path.insert(0, str(project_dir))
 
 from common.models import ReferenceTransformer
-from projects.transformer_fundamentals.evaluate import (
-    load_model_from_checkpoint,
-    generate_summary
-)
+from evaluate import load_model_from_checkpoint, generate_summary
 
 
 @pytest.fixture
