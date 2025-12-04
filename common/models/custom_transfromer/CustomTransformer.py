@@ -312,6 +312,7 @@ class CustomTransformer:
         #          → [batch, n_heads, seq, d_head]
         retrieved_knowledge = (probabilities @ V)
         # This step re-combines the separate heads into a single view in memory
+        #  → [batch, d_model, seq]
         retrieved_knowledge = retrieved_knowledge.transpose(1,2).contiguous().view(batch_size, seq_len, self.d_model)
         self.cache.store_activation('block', block_step, 'retrieved_knowledge', retrieved_knowledge)
 
@@ -319,8 +320,103 @@ class CustomTransformer:
         # It's own independent representation, but we need to "mix" it together
         # This step allows for x-head concatiation
         return retrieved_knowledge  @ self.W_o[block_step]
-
     
+    def backward_attention(self, grad, block_step):
+        batch_size, seq_len, _ = grad.shape
+        retrieved_knowledge = self.cache.get_activation(
+            'block', block_step, 'retrieved_knowledge'
+        )
+
+        # === 7. Backward through W_o
+        # dL / dW - Loss gradient with respect to weights
+        # = input (retrieved knowledge) * loss_gradient
+        # retrieved_knowledge: [batch, d_model, seq_len] -> t -> [batch, seq_len, d_model]
+        # grad: [batch_size, seq_len, d_model]
+        self.cache.store_gradient(
+            ('W_o', block_step),
+            retrieved_knowledge.transpose(-2,-1) @ grad
+        )
+
+        # === 6. Backward through reshaped retrieved knowledge
+        # Backwards through W_o, then unpack attention heads
+        grad_retrieved_knowledge_concat = grad @ self.W_o[block_step].T
+        grad_retrieved_knowledge = grad_retrieved_knowledge_concat.view(
+            batch_size, seq_len, self.n_heads, self.d_head
+        ).transpose(1,2) # [batch, n_heads, seq_len, d_head]
+
+        # === 5. Backward through probabilities @ V
+        # "R = prob @ V (let R be "retrieved knowledge")
+        # dL / dP = dR / dL @ V.T
+        # dL / dV = prob.T @ dR / dL
+        probabilities = self.cache.get_activation('block', block_step, 'probabilities')
+        V_act = self.cache.get_activation('block', block_step, 'V')
+        # dL / dP = loss wrt. probability (what did probability interact with?)
+        grad_probabilities = grad_retrieved_knowledge @ V_act.transpose(-2,-1)
+        # dL / dV = loss wrt. V (what did V interact with?)
+        grad_V = probabilities.transpose(-2,-1) @ grad_retrieved_knowledge  
+
+        # === 4. Backward through softmax
+        grad_scores = self.backward_softmax(grad_probabilities, probabilities)
+
+        # === 3. Backward through mask
+
+        # === 2. Backward through scaling (stabilizing the scores)
+        # (Q @ K.T) / sqrt(d_head)
+        grad_scores = grad_scores / (self.d_head ** 0.5)
+
+        # === 1C. Backward through Q @ K.T
+        # Get cached values, # [n_head, seq_len, d_model]
+        # We already got V_act
+        Q_act = self.cache.get_activation('block', block_step, 'Q') 
+        K_act = self.cache.get_activation('block', block_step, 'K')
+        # scores = Q @ K.T
+        # dL / dK = dL/dS * K
+        # dL / dQ = Q.T @ dL/dS
+        grad_K = grad_scores @ K_act
+        grad_Q = Q_act.transpose(-2,-1) @ grad_scores
+
+        # === 1B. Backward through re-shape QKV
+        grad_Q = grad_Q.transpose(1,2).contiguous().view(batch_size, seq_len, self.d_model)
+        grad_K = grad_K.transpose(1,2).contiguous().view(batch_size, seq_len, self.d_model)
+        grad_V = grad_V.transpose(1,2).contiguous().view(batch_size, seq_len, self.d_model)
+
+        # === 1A. Backward through QKV
+        attn_input = self.cache.get_activation('block', block_step, 'input')
+        self.cache.store_gradient(
+            ('W_Q', block_step),
+            attn_input.transpose(-2, -1) @ grad_Q
+        )
+        self.cache.store_gradient(
+            ('W_K', block_step),
+            attn_input.transpose(-2, -1) @ grad_K
+        )
+        self.cache.store_gradient(
+            ('W_V', block_step),
+            attn_input.transpose(-2, -1) @ grad_V
+        )
+
+        # Combined Gradients
+        return (
+            grad_Q @ self.Q[block_step].T +
+            grad_K @ self.K[block_step].T +
+            grad_V @ self.V[block_step].T
+        )
+
+    def backward_softmax(self, grad_prob, prob):
+        """
+        Args:
+            grad_prob: dL/dY [batch, n_heads, seq_len, seq_len]
+            prob: [batch, n_heads, seq_len, seq_len]
+
+        Returns
+            
+            dL/dX : [batch, n_heads, seq_len, seq_len]
+        """
+
+        summation = (grad_prob * prob).sum(dim=-1, keepdim=True)
+        return prob * (grad_prob - summation)
+
+
     def feed_forward_network(self, X, block_step):
         """
         Computes a 2-layer fully-connected neural network with activations 
@@ -338,6 +434,45 @@ class CustomTransformer:
         # Output is already cached
         # self.cache.store_activation('block', block_step, 'ffn_res', ffn_res)
         return post_activation @ self.W2[block_step]
+    
+    def backward_ffn(self, grad, block_step):
+        """
+        Backwards pass through the FFN. Since it's only a 2-layer network, 
+        we don't use a loop. If you wanted a multi-layered FFN, you'd need to
+        re-write this function
+        """
+
+        ffn_input = self.cache.get_activation('block', block_step, 'ffn_input')
+        pre_activation = self.cache.get_activation(
+            'block', block_step, 'ffn_pre_activation'
+        )
+        post_activation = self.cache.get_activation(
+            'block', block_step, 'ffn_post_activation'
+        )
+
+        # Backward pass through W2 (no GeLU)
+        # dL / dW = input * loss_gradient
+        self.cache.store_gradient(
+            ('W2', block_step),
+            post_activation.transpose(-2, -1) @ grad
+        )
+
+        # Propagate through the activations
+        # dL/dX (post-activation) = grad * W2
+        grad_post_activation = grad @ self.W2[block_step].T
+        # dL / dX (pre-activiation) = dL / dX (post-activtion) * gelu'(pre-activation)
+        grad_pre_activation = grad_post_activation * self.gelu_derivative(pre_activation)
+
+        # Backwards pass through W1
+        # dL / dW = input * pre-activation loss gradient
+        self.cache.store_gradient(
+            ('W1', block_step),
+            ffn_input.transpose(-2, -1) @ grad_pre_activation
+        )
+
+        # dL / dX (ffn input) = grad_pre_activation * W1
+        grad_input = grad_pre_activation @ self.W1[block_step].T
+        return grad_input
 
     def stabilize_scores(self, scores):
         """
@@ -438,49 +573,7 @@ class CustomTransformer:
             Dictionary mapping layer names to L2 norms
         """
         pass
-
-    def backward_ffn(self, grad, block_step):
-        """
-        Backwards pass through the FFN. Since it's only a 2-layer network, 
-        we don't use a loop. If you wanted a multi-layered FFN, you'd need to
-        re-write this function
-        """
-
-        ffn_input = self.cache.get_activation('block', block_step, 'ffn_input')
-        pre_activation = self.cache.get_activation(
-            'block', block_step, 'ffn_pre_activation'
-        )
-        post_activation = self.cache.get_activation(
-            'block', block_step, 'ffn_post_activation'
-        )
-
-        # Backward pass through W2 (no GeLU)
-        # dL / dW = input * loss_gradient
-        self.cache.store_gradient(
-            ('W2', block_step),
-            post_activation.transpose(-2, -1) @ grad
-        )
-
-        # Propagate through the activations
-        # dL/dX (post-activation) = grad * W2
-        grad_post_activation = grad @ self.W2[block_step].T
-        # dL / dX (pre-activiation) = dL / dX (post-activtion) * gelu'(pre-activation)
-        grad_pre_activation = grad_post_activation * self.gelu_derivative(pre_activation)
-
-        # Backwards pass through W1
-        # dL / dW = input * pre-activation loss gradient
-        self.cache.store_gradient(
-            ('W1', block_step),
-            ffn_input.transpose(-2, -1) @ grad_pre_activation
-        )
-
-        # dL / dX (ffn input) = grad_pre_activation * W1
-        grad_input = grad_pre_activation @ self.W1[block_step].T
-        return grad_input
-
-    def backward_attention(self, grad, block_step):
-        pass
-
+    
     # === Parameter Updates ===
     def update_parameters(self, learning_rate):
         """Update weights and biases using computed gradients."""
