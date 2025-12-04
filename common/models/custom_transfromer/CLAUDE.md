@@ -23,7 +23,7 @@ When providing advice on this codebase:
 2. ~~**Cache causal mask** — create once in `__init__` instead of every forward pass~~
 3. ~~**Device consistency** — ensure dynamically created tensors match input device~~
 
-### Phase 2: Multi-Block Architecture (in progress)
+### Phase 2: Multi-Block Architecture ✓
 - Add `n_blocks` configuration parameter
 - Reshape weights to 3D: `[n_blocks, ...]` for Q, K, V, W_o, W1, W2, layer norm params
 - Loop over blocks in decoder, passing block index to attention/FFN

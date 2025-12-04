@@ -7,6 +7,34 @@ from ..base import BaseLanguageModel
 
 
 class CustomTransformer:
+
+    class BackpropCache:
+        def __init__(self):
+            self.activations = {}
+            self.gradients = {}
+
+        def store_activation(self, *args):
+            """Last arg is value, everything before is the key tuple"""
+            key = args[:-1] if len(args) > 2 else args[0]
+            value = args[-1]
+            self.activations[key] = value
+
+        def get_activation(self, *args):
+            """All args form the key tuple"""
+            key = args if len(args) > 1 else args[0]
+            return self.activations[key]
+
+        def store_gradient(self, *args):
+            """Last arg is value, everything before is the key tuple"""
+            key = args[:-1] if len(args) > 2 else args[0]
+            value = args[-1]
+            self.gradients[key] = value
+
+        def get_gradient(self, *args):
+            key = args if len(args) > 1 else args[0]
+            return self.gradients[key]
+
+    
     def __init__(self, config):
         """
         Initialize model with specified layer sizes.
@@ -23,6 +51,8 @@ class CustomTransformer:
 
         self.device = self._resolve_device(config)
         self.dtype = config.get_dtype() or torch.bfloat16
+
+        self.cache = self.BackpropCache()
 
         self._initialize_weights_and_biases()
         self._init_causal_mask()
@@ -159,9 +189,9 @@ class CustomTransformer:
         embedding = self.embed(batched_tokens)
 
         # Step 2: Decoder Block (repeat N-times)
-        latent_result = self.decoder(embedding)
+        latent_result = self.decoder(embedding)  
         
-        # Step 5: Final Output
+        # Step 5: Final Output projecting back to vocabulary
         logits = latent_result @ self.output_projection
 
         return logits
@@ -188,6 +218,7 @@ class CustomTransformer:
             embedding: [batch, seq_len, d_model]
         """
         # Grabbing the token vocab embeddings rows
+        self.cache.store_activation('token_indices', batched_tokens)
         tokens = self.vocab_embedding[batched_tokens] 
         # shape = [batch_size, seq_len, d_model]
 
@@ -212,11 +243,25 @@ class CustomTransformer:
 
         # Each block receives the previous blocks output 
         for block_step in range(self.n_blocks):
-            latent_result = latent_result + self.attention(latent_result, block_step)
+            # Cache input to block
+            self.cache.store_activation('block', block_step, 'input', latent_result)
+
+            # Cache attention, pre-norm latent result, then normalize
+            attn_res = self.attention(latent_result, block_step)
+            self.cache.store_activation('block', block_step, 'attn_res', attn_res)
+            latent_result += attn_res
+            self.cache.store_activation('block', block_step, 'attn_pre_norm', latent_result)
             latent_result = self.normalize_attention(latent_result, block_step)
 
-            latent_result = latent_result + self.feed_forward_network(latent_result, block_step)
+            # Cache pre-normalization ffn, then normalize
+            self.cache.store_activation('block', block_step, 'ffn_input', latent_result)
+            ffn_res = self.feed_forward_network(latent_result, block_step)
+            self.cache.store_activation('block', block_step, 'ffn_res', ffn_res)
+            latent_result += ffn_res
+            self.cache.store_activation('block', block_step, 'ffn_pre_norm', latent_result)
             latent_result = self.normalize_ffn(latent_result, block_step)
+
+        self.cache.store_activation('latent_result', latent_result)
         return latent_result
 
 
@@ -241,11 +286,14 @@ class CustomTransformer:
         K = K.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1,2)
         V = V.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1,2)
        
-        # Compute attention scores with 
-        # Need to make the dimensions match: 
+        # Note: Caching happens after re-shape
+        self.cache.store_activation('block', block_step, 'Q', Q)
+        self.cache.store_activation('block', block_step, 'K', K)
+        self.cache.store_activation('block', block_step, 'V', V)
+       
+        # Compute attention scores with w/ multi-headed attention
         # Q [batch_size, seq_len, d_model] * K [batch, d_model, seq_len]
-
-        # With multi-head attention, this becomes
+        # Need to make the dimensions match: 
         # Q @ K.T: [batch, n_heads, seq, d_head] @ [batch, n_heads, d_head, seq]
         #        → [batch, n_heads, seq, seq]
         scores = self.stabilize_scores(Q @ K.transpose(-2, -1))
@@ -256,17 +304,21 @@ class CustomTransformer:
         # Compute (token, head) probabilities using softmax 
         # How relevant is each query to each key? 
         probabilities = F.softmax(scores, dim=-1)
+        self.cache.store_activation('block', block_step, 'probabilities', probabilities)
 
         # Considering the probabilities, what knowledge should be retrieved from the values?
         # [batch, seq_len, d_model]
         # probabilities @ V: [batch, n_heads, seq, seq] @ [batch, n_heads, seq, d_head]
         #          → [batch, n_heads, seq, d_head]
         retrieved_knowledge = (probabilities @ V)
+        # This step re-combines the separate heads into a single view in memory
+        retrieved_knowledge = retrieved_knowledge.transpose(1,2).contiguous().view(batch_size, seq_len, self.d_model)
+        self.cache.store_activation('block', block_step, 'retrieved_knowledge', retrieved_knowledge)
 
         # Next, we need to actually distill the knowledge. Each attention head has produced
         # It's own independent representation, but we need to "mix" it together
         # This step allows for x-head concatiation
-        return retrieved_knowledge.transpose(1,2).contiguous().view(batch_size, seq_len, self.d_model) @ self.W_o[block_step]
+        return retrieved_knowledge  @ self.W_o[block_step]
 
     
     def feed_forward_network(self, X, block_step):
@@ -274,7 +326,18 @@ class CustomTransformer:
         Computes a 2-layer fully-connected neural network with activations 
         only after the first layer (in this case, gelu)
         """
-        return F.gelu(X @ self.W1[block_step]) @ self.W2[block_step]
+        # Input is cached a layer up 
+        # self.cache.store_activation('ffn_input', block_step, X)
+
+        pre_activation = X @ self.W1[block_step]
+        self.cache.store_activation('block', block_step, 'ffn_pre_activation', pre_activation)
+
+        post_activation = F.gelu(pre_activation)
+        self.cache.store_activation('block', block_step, 'ffn_post_activation', post_activation)
+
+        # Output is already cached
+        # self.cache.store_activation('block', block_step, 'ffn_res', ffn_res)
+        return post_activation @ self.W2[block_step]
 
     def stabilize_scores(self, scores):
         """
@@ -294,15 +357,78 @@ class CustomTransformer:
     # === Backward Pass ===
     def backward(self, loss_gradient):
         """
-        Backward pass to compute gradients.
+        Backward pass to compute gradients. 
+        
+        In back propagation, we need to be able to compute the "sensitivity" of
+        how each input maps to each output so we can make the necessary corrections
+        in our computation. 
+
+        Internally, the network knows it's computations, so we can compute the sensitivies
+        via the derivatives corresponding to that computation. 
+
+        However, to start the backpropagation process we need to compute the sensitivity
+        with respect to the final outputs. The sensisitivity in this case depends on what
+        our target objective is. Most generally, that "objective" is to minimize the loss
+        and depends on the loss function itself (MSE, Cross-entropy). By passing 
+        in the loss gradient we are able to separate how we define the objective and 
+        measure success from the internal mechanics of the network.
 
         Args:
-            loss_gradient: Gradient of loss with respect to output activations
+            loss_gradient: dL/dLogits
+            "How sensitive is loss with respect to each output?"
+            -> [batch_size, seq_len, vocab_size]
 
         Returns:
             Nothing
         """
-        pass
+
+        # Starting from the "back" of the network, the input to the output projection
+        # was the output of the last transformer block, the decoder's latent_result
+        output_projection_input = self.cache.get_activation('latent_result')
+
+        # Weight Gradient for output_projection weight matrix
+        # dL/dW - Gradient of each weight, conceptually the weight's contribution to the output
+        # dL/dW = Input activations * output loss sensitivity 
+        # dL/dW - Input @ dL/dY  [d_model, vocab_size]
+        self.cache.store_gradient(
+            'dL/dW - output_projection', 
+            output_projection_input.transpose(-2, -1) @ loss_gradient 
+        )
+
+        # Gradient to pass backwards 
+        # How should the upstream layer have changed its output? 
+        # dL/dX = dL/dY @ W.T [batch_size, seq_len, d_model]
+        # derivative of the loss wrt the output project's input (decoder output)
+        grad = loss_gradient @ self.output_projection.T
+
+        # Next, backpropgate through attention blocks
+        for block_step in range(self.n_blocks -1, -1, -1):
+        
+            # Compute loss gradient for FNN
+            grad_ffn_prenorm = grad
+            self.cache.store_gradient(
+                (block_step, 'ffn_pre_norm'),
+                grad_ffn_prenorm
+            )
+
+            # Split into FFN and skip-path
+            grad_ffn_res = grad_ffn_prenorm     # Goes into FFN
+            grad_post_attn = grad_ffn_prenorm   # Skip connection
+
+            grad_ffn_input = self.backward_ffn(grad_ffn_res, block_step)
+            
+            grad_post_attn_norm = grad_post_attn + grad_ffn_input
+            grad_pre_attn_norm = grad_post_attn_norm
+
+            # Split into attention and bypass
+            grad_attn_res = grad_pre_attn_norm  # Goes into Attention
+            grad_skip_attn = grad_pre_attn_norm     # Skip connection
+
+            grad_attn_input = self.backward_attention(grad_attn_res, block_step)
+
+            grad = grad_skip_attn + grad_attn_input
+
+        # TODO: Grad embedding?         
 
     def compute_gradient_norms(self):
         """
@@ -311,6 +437,48 @@ class CustomTransformer:
         Returns:
             Dictionary mapping layer names to L2 norms
         """
+        pass
+
+    def backward_ffn(self, grad, block_step):
+        """
+        Backwards pass through the FFN. Since it's only a 2-layer network, 
+        we don't use a loop. If you wanted a multi-layered FFN, you'd need to
+        re-write this function
+        """
+
+        ffn_input = self.cache.get_activation('block', block_step, 'ffn_input')
+        pre_activation = self.cache.get_activation(
+            'block', block_step, 'ffn_pre_activation'
+        )
+        post_activation = self.cache.get_activation(
+            'block', block_step, 'ffn_post_activation'
+        )
+
+        # Backward pass through W2 (no GeLU)
+        # dL / dW = input * loss_gradient
+        self.cache.store_gradient(
+            ('W2', block_step),
+            post_activation.transpose(-2, -1) @ grad
+        )
+
+        # Propagate through the activations
+        # dL/dX (post-activation) = grad * W2
+        grad_post_activation = grad @ self.W2[block_step].T
+        # dL / dX (pre-activiation) = dL / dX (post-activtion) * gelu'(pre-activation)
+        grad_pre_activation = grad_post_activation * self.gelu_derivative(pre_activation)
+
+        # Backwards pass through W1
+        # dL / dW = input * pre-activation loss gradient
+        self.cache.store_gradient(
+            ('W1', block_step),
+            ffn_input.transpose(-2, -1) @ grad_pre_activation
+        )
+
+        # dL / dX (ffn input) = grad_pre_activation * W1
+        grad_input = grad_pre_activation @ self.W1[block_step].T
+        return grad_input
+
+    def backward_attention(self, grad, block_step):
         pass
 
     # === Parameter Updates ===
@@ -337,3 +505,18 @@ class CustomTransformer:
     def get_layer_info(self, layer_idx):
         """Get detailed info about a specific layer."""
         pass
+
+    # === Math Functions (to be refactored) ===
+    def gelu_derivative(self, x):
+        """Derivative of GELU activation function."""
+        # Approximate derivative using the tanh formulation
+        sqrt_2_pi = np.sqrt(2 / np.pi)
+        cubic_term = 0.044715 * x**3
+        tanh_arg = sqrt_2_pi * (x + cubic_term)
+        tanh_out = np.tanh(tanh_arg)
+        
+        # d/dx[0.5 * x * (1 + tanh(...))]
+        sech2 = 1 - tanh_out**2
+        dtanh = sqrt_2_pi * (1 + 3 * 0.044715 * x**2) * sech2
+        
+        return 0.5 * (1 + tanh_out) + 0.5 * x * dtanh
