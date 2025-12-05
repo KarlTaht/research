@@ -28,10 +28,33 @@ When providing advice on this codebase:
 - Reshape weights to 3D: `[n_blocks, ...]` for Q, K, V, W_o, W1, W2, layer norm params
 - Loop over blocks in decoder, passing block index to attention/FFN
 
-### Phase 3: Manual Gradient Descent (Incremental)
-Build backprop layer-by-layer, testing each against PyTorch autograd:
-1. Output projection (simplest linear layer)
-2. FFN (linear + GELU nonlinearity)
-3. Layer norm
-4. Attention (most complex — softmax, multi-head reshapes)
-5. Embeddings
+### Phase 3: Manual Gradient Descent (Incremental) ✓
+Build backprop layer-by-layer:
+1. ~~Output projection (simplest linear layer)~~
+2. ~~FFN (linear + GELU nonlinearity)~~
+3. Layer norm — skipped (gamma/beta stay at defaults: γ=1, β=0)
+4. ~~Attention (softmax, multi-head reshapes, Q/K/V/W_o gradients)~~
+5. ~~Embeddings (vocab via index_add_, pos via batch sum)~~
+6. ~~Parameter updates (SGD)~~
+
+## Implementation Notes
+
+### BackpropCache
+Nested class for storing activations (forward) and gradients (backward):
+- `store_activation(key, value)` / `get_activation(key)`
+- `store_gradient(key, value)` / `get_gradient(key)`
+- Keys can be strings or tuples like `('W_Q', block_step)`
+
+### Gradient Shape Convention
+Weight gradients must be summed over batch dimension (`.sum(dim=0)`) before storing, since weights are shared across batch.
+
+### Key Formulas
+- **Cross-entropy gradient**: `probs - one_hot(target)`
+- **Linear Y = X @ W**: `dL/dW = X.T @ dL/dY`, `dL/dX = dL/dY @ W.T`
+- **Softmax**: `prob * (grad - sum(grad * prob))`
+- **GELU derivative**: Uses tanh approximation formula
+- **Addition (residual)**: Gradient copies to both branches unchanged
+- **Embedding**: Use `index_add_` for vocab, `sum(dim=0)` for positional
+
+### Testing
+Run `projects/custom_transformer/forward_test.py` to verify forward/backward/update cycle.
