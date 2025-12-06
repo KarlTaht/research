@@ -39,19 +39,36 @@ class CustomTransformer:
     def __init__(self, config):
         """
         Initialize model with specified layer sizes.
+
+        Args:
+            config: Configuration object or dict with optional keys:
+                - vocab_size (default: 128)
+                - max_seq_len (default: 128)
+                - n_blocks (default: 8)
+                - n_heads (default: 4)
+                - d_model (default: 128)
+                - d_ffn (default: 128)
+                - device (default: auto-detect)
+                - dtype (default: bfloat16)
         """
-        self.vocab_size = 128
-        self.max_seq_len = 128
-        
-        self.n_blocks = 8
-        self.n_heads = 4
-        self.d_model = 128
-        self.d_ffn = 128
-        
+        # Support both dict-style and object-style config access
+        def get_config(key, default):
+            if hasattr(config, 'get'):
+                return config.get(key, default)
+            return getattr(config, key, default)
+
+        self.vocab_size = get_config('vocab_size', 128)
+        self.max_seq_len = get_config('max_seq_len', 128)
+
+        self.n_blocks = get_config('n_blocks', 8)
+        self.n_heads = get_config('n_heads', 4)
+        self.d_model = get_config('d_model', 128)
+        self.d_ffn = get_config('d_ffn', 128)
+
         self.d_head = self.d_model // self.n_heads
 
         self.device = self._resolve_device(config)
-        self.dtype = config.get_dtype() or torch.bfloat16
+        self.dtype = get_config('dtype', None) or torch.bfloat16
 
         self.cache = self.BackpropCache()
 
@@ -60,8 +77,17 @@ class CustomTransformer:
 
     @staticmethod
     def _resolve_device(config) -> str:
-        if config.get_device():
-            return config.get_device()
+        # Support both dict-style and object-style config access
+        device = None
+        if hasattr(config, 'get'):
+            device = config.get('device', None)
+        elif hasattr(config, 'get_device'):
+            device = config.get_device()
+        elif hasattr(config, 'device'):
+            device = config.device
+
+        if device:
+            return device
         if torch.cuda.is_available():
             return "cuda"
         if torch.backends.mps.is_available():
