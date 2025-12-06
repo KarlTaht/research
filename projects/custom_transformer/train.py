@@ -22,7 +22,7 @@ from common.utils import save_experiment
 def load_config(config_path: str = None):
     """Load configuration from YAML file."""
     if config_path is None:
-        config_path = Path(__file__).parent / "config.yaml"
+        config_path = Path(__file__).parent / "configs" / "tiny-textbooks-small.yaml"
     with open(config_path) as f:
         return yaml.safe_load(f)
 
@@ -76,7 +76,12 @@ def evaluate(model, dataloader, max_batches=None):
 
 
 def main():
-    config = load_config()
+    import argparse
+    parser = argparse.ArgumentParser(description='Train CustomTransformer')
+    parser.add_argument('--config', type=str, default=None, help='Path to config.yaml')
+    args = parser.parse_args()
+
+    config = load_config(args.config)
     print("Configuration:")
     print(yaml.dump(config, default_flow_style=False))
 
