@@ -648,6 +648,171 @@ class CustomTransformer:
         self.vocab_embedding -= lr * self.cache.get_gradient('vocab_embedding')
         self.pos_embedding -= lr * self.cache.get_gradient('pos_embedding')
 
+    # === Serialization ===
+    def state_dict(self) -> dict:
+        """
+        Return all model parameters as a dictionary.
+
+        Similar to nn.Module.state_dict() but for raw tensors.
+        All tensors are detached and moved to CPU for safe serialization.
+
+        Returns:
+            Dictionary mapping parameter names to tensors
+        """
+        return {
+            # Embeddings
+            'vocab_embedding': self.vocab_embedding.detach().cpu(),
+            'pos_embedding': self.pos_embedding.detach().cpu(),
+            # Attention weights [n_blocks, d_model, d_model]
+            'Q': self.Q.detach().cpu(),
+            'K': self.K.detach().cpu(),
+            'V': self.V.detach().cpu(),
+            'W_o': self.W_o.detach().cpu(),
+            # Attention layer norm [n_blocks, d_model]
+            'attention_gamma': self.attention_gamma.detach().cpu(),
+            'attention_beta': self.attention_beta.detach().cpu(),
+            # FFN weights [n_blocks, ...]
+            'W1': self.W1.detach().cpu(),
+            'W2': self.W2.detach().cpu(),
+            # FFN layer norm [n_blocks, d_model]
+            'ffn_gamma': self.ffn_gamma.detach().cpu(),
+            'ffn_beta': self.ffn_beta.detach().cpu(),
+            # Output projection [d_model, vocab_size]
+            'output_projection': self.output_projection.detach().cpu(),
+        }
+
+    def load_state_dict(self, state_dict: dict, strict: bool = True):
+        """
+        Load model parameters from a state dictionary.
+
+        Args:
+            state_dict: Dictionary mapping parameter names to tensors
+            strict: If True, raise error on missing/unexpected keys
+
+        Returns:
+            Tuple of (missing_keys, unexpected_keys)
+        """
+        expected_keys = {
+            'vocab_embedding', 'pos_embedding',
+            'Q', 'K', 'V', 'W_o',
+            'attention_gamma', 'attention_beta',
+            'W1', 'W2',
+            'ffn_gamma', 'ffn_beta',
+            'output_projection',
+        }
+
+        missing_keys = expected_keys - set(state_dict.keys())
+        unexpected_keys = set(state_dict.keys()) - expected_keys
+
+        if strict and missing_keys:
+            raise KeyError(f"Missing keys in state_dict: {missing_keys}")
+        if strict and unexpected_keys:
+            raise KeyError(f"Unexpected keys in state_dict: {unexpected_keys}")
+
+        # Load each parameter, moving to correct device and dtype
+        if 'vocab_embedding' in state_dict:
+            self.vocab_embedding = state_dict['vocab_embedding'].to(self.device, self.dtype)
+        if 'pos_embedding' in state_dict:
+            self.pos_embedding = state_dict['pos_embedding'].to(self.device, self.dtype)
+        if 'Q' in state_dict:
+            self.Q = state_dict['Q'].to(self.device, self.dtype)
+        if 'K' in state_dict:
+            self.K = state_dict['K'].to(self.device, self.dtype)
+        if 'V' in state_dict:
+            self.V = state_dict['V'].to(self.device, self.dtype)
+        if 'W_o' in state_dict:
+            self.W_o = state_dict['W_o'].to(self.device, self.dtype)
+        if 'attention_gamma' in state_dict:
+            self.attention_gamma = state_dict['attention_gamma'].to(self.device, self.dtype)
+        if 'attention_beta' in state_dict:
+            self.attention_beta = state_dict['attention_beta'].to(self.device, self.dtype)
+        if 'W1' in state_dict:
+            self.W1 = state_dict['W1'].to(self.device, self.dtype)
+        if 'W2' in state_dict:
+            self.W2 = state_dict['W2'].to(self.device, self.dtype)
+        if 'ffn_gamma' in state_dict:
+            self.ffn_gamma = state_dict['ffn_gamma'].to(self.device, self.dtype)
+        if 'ffn_beta' in state_dict:
+            self.ffn_beta = state_dict['ffn_beta'].to(self.device, self.dtype)
+        if 'output_projection' in state_dict:
+            self.output_projection = state_dict['output_projection'].to(self.device, self.dtype)
+
+        return missing_keys, unexpected_keys
+
+    def get_config(self) -> dict:
+        """Return model configuration as dictionary."""
+        return {
+            'vocab_size': self.vocab_size,
+            'max_seq_len': self.max_seq_len,
+            'n_blocks': self.n_blocks,
+            'n_heads': self.n_heads,
+            'd_model': self.d_model,
+            'd_ffn': self.d_ffn,
+            'd_head': self.d_head,
+            'device': self.device,
+            'dtype': str(self.dtype),  # Store as string for serialization
+        }
+
+    def save_checkpoint(self, path: str, **metadata):
+        """
+        Save model checkpoint to file.
+
+        The checkpoint contains:
+        - state_dict: All model parameters
+        - config: Model architecture configuration
+        - metadata: Any additional info (epoch, loss, etc.)
+
+        Args:
+            path: Path to save checkpoint
+            **metadata: Additional metadata to save (epoch, loss, optimizer_state, etc.)
+
+        Example:
+            model.save_checkpoint('checkpoint.pt', epoch=5, train_loss=1.23)
+        """
+        checkpoint = {
+            'state_dict': self.state_dict(),
+            'config': self.get_config(),
+            'metadata': metadata,
+        }
+        torch.save(checkpoint, path)
+        print(f"Checkpoint saved: {path}")
+
+    @classmethod
+    def from_checkpoint(cls, path: str, config=None, device: str = None):
+        """
+        Load model from checkpoint file.
+
+        Args:
+            path: Path to checkpoint file
+            config: Optional config override (uses saved config if None)
+            device: Device to load model onto (auto-detect if None)
+
+        Returns:
+            Tuple of (model, metadata)
+
+        Example:
+            model, meta = CustomTransformer.from_checkpoint('checkpoint.pt')
+            print(f"Loaded from epoch {meta.get('epoch')}")
+        """
+        checkpoint = torch.load(path, map_location='cpu', weights_only=False)
+
+        # Use saved config or override
+        saved_config = checkpoint.get('config', {})
+        if config is None:
+            # Create a config dict from saved values
+            config = saved_config.copy()
+            if device:
+                config['device'] = device
+
+        # Create model with config
+        model = cls(config)
+
+        # Load state
+        model.load_state_dict(checkpoint['state_dict'])
+
+        print(f"Checkpoint loaded: {path}")
+        return model, checkpoint.get('metadata', {})
+
     # === Visualization Support ===
     def get_state(self):
         """
@@ -656,11 +821,35 @@ class CustomTransformer:
         Returns:
             Dictionary containing weights, activations, gradients, architecture
         """
-        pass
+        return {
+            'weights': self.state_dict(),
+            'activations': dict(self.cache.activations),
+            'gradients': dict(self.cache.gradients),
+            'config': self.get_config(),
+        }
 
     def get_layer_info(self, layer_idx):
-        """Get detailed info about a specific layer."""
-        pass
+        """Get detailed info about a specific layer/block."""
+        if layer_idx < 0 or layer_idx >= self.n_blocks:
+            raise IndexError(f"Block index {layer_idx} out of range [0, {self.n_blocks})")
+
+        return {
+            'block_idx': layer_idx,
+            'attention': {
+                'Q': self.Q[layer_idx],
+                'K': self.K[layer_idx],
+                'V': self.V[layer_idx],
+                'W_o': self.W_o[layer_idx],
+                'gamma': self.attention_gamma[layer_idx],
+                'beta': self.attention_beta[layer_idx],
+            },
+            'ffn': {
+                'W1': self.W1[layer_idx],
+                'W2': self.W2[layer_idx],
+                'gamma': self.ffn_gamma[layer_idx],
+                'beta': self.ffn_beta[layer_idx],
+            },
+        }
 
     # === Math Functions (to be refactored) ===
     def gelu_derivative(self, x):

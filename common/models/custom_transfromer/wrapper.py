@@ -260,34 +260,9 @@ class CustomTransformerWrapper:
 
         Args:
             path: Path to save checkpoint
-            **kwargs: Additional metadata to save
+            **kwargs: Additional metadata to save (epoch, loss, etc.)
         """
-        state = {
-            'vocab_embedding': self.model.vocab_embedding,
-            'pos_embedding': self.model.pos_embedding,
-            'Q': self.model.Q,
-            'K': self.model.K,
-            'V': self.model.V,
-            'W_o': self.model.W_o,
-            'W1': self.model.W1,
-            'W2': self.model.W2,
-            'attention_gamma': self.model.attention_gamma,
-            'attention_beta': self.model.attention_beta,
-            'ffn_gamma': self.model.ffn_gamma,
-            'ffn_beta': self.model.ffn_beta,
-            'output_projection': self.model.output_projection,
-            'config': {
-                'vocab_size': self.vocab_size,
-                'd_model': self.model.d_model,
-                'n_blocks': self.model.n_blocks,
-                'n_heads': self.model.n_heads,
-                'd_ffn': self.model.d_ffn,
-                'max_seq_len': self.model.max_seq_len,
-            },
-            **kwargs,
-        }
-        torch.save(state, path)
-        print(f"Checkpoint saved: {path}")
+        self.model.save_checkpoint(path, **kwargs)
 
     def load_checkpoint(self, path: str) -> Dict[str, Any]:
         """
@@ -299,21 +274,72 @@ class CustomTransformerWrapper:
         Returns:
             Dict with checkpoint metadata
         """
-        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        checkpoint = torch.load(path, map_location='cpu', weights_only=False)
 
-        self.model.vocab_embedding = checkpoint['vocab_embedding'].to(self.device)
-        self.model.pos_embedding = checkpoint['pos_embedding'].to(self.device)
-        self.model.Q = checkpoint['Q'].to(self.device)
-        self.model.K = checkpoint['K'].to(self.device)
-        self.model.V = checkpoint['V'].to(self.device)
-        self.model.W_o = checkpoint['W_o'].to(self.device)
-        self.model.W1 = checkpoint['W1'].to(self.device)
-        self.model.W2 = checkpoint['W2'].to(self.device)
-        self.model.attention_gamma = checkpoint['attention_gamma'].to(self.device)
-        self.model.attention_beta = checkpoint['attention_beta'].to(self.device)
-        self.model.ffn_gamma = checkpoint['ffn_gamma'].to(self.device)
-        self.model.ffn_beta = checkpoint['ffn_beta'].to(self.device)
-        self.model.output_projection = checkpoint['output_projection'].to(self.device)
+        # Handle both old format (flat) and new format (nested state_dict)
+        if 'state_dict' in checkpoint:
+            self.model.load_state_dict(checkpoint['state_dict'])
+            return checkpoint.get('metadata', {})
+        else:
+            # Legacy format - direct tensor storage
+            legacy_state = {k: v for k, v in checkpoint.items()
+                          if k not in ('config', 'metadata')}
+            self.model.load_state_dict(legacy_state, strict=False)
+            print(f"Checkpoint loaded: {path}")
+            return checkpoint.get('config', {})
 
-        print(f"Checkpoint loaded: {path}")
-        return checkpoint.get('config', {})
+    @classmethod
+    def from_checkpoint(cls, path: str, device: str = None) -> 'CustomTransformerWrapper':
+        """
+        Create wrapper from checkpoint file.
+
+        Args:
+            path: Path to checkpoint file
+            device: Device to load model onto
+
+        Returns:
+            CustomTransformerWrapper instance
+
+        Example:
+            model = CustomTransformerWrapper.from_checkpoint('checkpoint.pt')
+        """
+        checkpoint = torch.load(path, map_location='cpu', weights_only=False)
+
+        # Get config from checkpoint
+        config = checkpoint.get('config', {})
+
+        # Parse dtype from string if present
+        dtype = None
+        dtype_str = config.get('dtype')
+        if dtype_str:
+            dtype_map = {
+                'torch.float32': torch.float32,
+                'torch.float16': torch.float16,
+                'torch.bfloat16': torch.bfloat16,
+                'torch.float64': torch.float64,
+            }
+            dtype = dtype_map.get(dtype_str)
+
+        # Create wrapper with saved config
+        wrapper = cls(
+            vocab_size=config.get('vocab_size', 128),
+            max_seq_len=config.get('max_seq_len', 128),
+            n_blocks=config.get('n_blocks', 8),
+            n_heads=config.get('n_heads', 4),
+            d_model=config.get('d_model', 128),
+            d_ffn=config.get('d_ffn', 128),
+            device=device or config.get('device'),
+            dtype=dtype,
+        )
+
+        # Load state
+        if 'state_dict' in checkpoint:
+            wrapper.model.load_state_dict(checkpoint['state_dict'])
+        else:
+            # Legacy format
+            legacy_state = {k: v for k, v in checkpoint.items()
+                          if k not in ('config', 'metadata')}
+            wrapper.model.load_state_dict(legacy_state, strict=False)
+
+        print(f"Model loaded from checkpoint: {path}")
+        return wrapper

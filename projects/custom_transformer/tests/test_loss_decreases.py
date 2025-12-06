@@ -166,6 +166,30 @@ class TestCustomTransformerFunctional:
 
         assert torch.allclose(initial_logits, loaded_logits, atol=1e-5)
 
+    def test_from_checkpoint(self, model, tiny_config, tmp_path):
+        """Test creating model from checkpoint using class method."""
+        # Get initial output
+        input_ids = torch.randint(0, tiny_config['vocab_size'], (1, 8))
+        initial_outputs = model.forward(input_ids)
+        initial_logits = initial_outputs['logits'].clone()
+
+        # Save checkpoint with metadata
+        checkpoint_path = tmp_path / "test_checkpoint.pt"
+        model.save_checkpoint(str(checkpoint_path), epoch=5, train_loss=1.23)
+
+        # Load using class method (no need to specify config)
+        model2 = CustomTransformerWrapper.from_checkpoint(str(checkpoint_path))
+
+        # Verify outputs match
+        loaded_outputs = model2.forward(input_ids)
+        loaded_logits = loaded_outputs['logits']
+
+        assert torch.allclose(initial_logits, loaded_logits, atol=1e-5)
+
+        # Verify config was preserved
+        assert model2.vocab_size == tiny_config['vocab_size']
+        assert model2.model.n_blocks == tiny_config['n_blocks']
+
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '-s'])
