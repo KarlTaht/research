@@ -99,9 +99,14 @@ class CustomTransformerWrapper:
             logits_for_loss = logits
             if self.dtype == torch.bfloat16:
                 logits_for_loss = logits.to(torch.float32)
+
+            # CAUSAL LM: Shift so logits[i] predicts labels[i+1]
+            shift_logits = logits_for_loss[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+
             loss = F.cross_entropy(
-                logits_for_loss.view(-1, self.vocab_size),
-                labels.view(-1),
+                shift_logits.view(-1, self.vocab_size),
+                shift_labels.view(-1),
                 ignore_index=-100,  # Standard ignore index for padding
             )
             output['loss'] = loss
@@ -149,9 +154,16 @@ class CustomTransformerWrapper:
         # PRECISION MIXING: Compute loss in float32 for numerical stability
         batch_size, seq_len = input_ids.shape
         logits_fp32 = logits.to(torch.float32) if self.dtype == torch.bfloat16 else logits
+
+        # CAUSAL LM: Shift so logits[i] predicts labels[i+1]
+        # logits: [batch, seq, vocab] -> shift to [batch, seq-1, vocab]
+        # labels: [batch, seq] -> shift to [batch, seq-1]
+        shift_logits = logits_fp32[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+
         loss = F.cross_entropy(
-            logits_fp32.view(-1, self.vocab_size),
-            labels.view(-1),
+            shift_logits.view(-1, self.vocab_size),
+            shift_labels.view(-1),
         )
 
         # NaN/Inf detection in loss
@@ -164,11 +176,18 @@ class CustomTransformerWrapper:
 
         # Compute loss gradient for backprop in float32, then cast back
         # Cross-entropy gradient: softmax(logits) - one_hot(targets)
-        probs = F.softmax(logits_fp32, dim=-1)
-        one_hot = F.one_hot(labels, num_classes=self.vocab_size).to(torch.float32)
+        # Must use SHIFTED logits/labels to match the loss computation
+        shift_probs = F.softmax(shift_logits, dim=-1)
+        shift_one_hot = F.one_hot(shift_labels, num_classes=self.vocab_size).to(torch.float32)
 
-        # Normalize by batch size * seq_len (matches cross_entropy averaging)
-        loss_gradient = (probs - one_hot) / (batch_size * seq_len)
+        # Gradient for shifted positions, normalized by number of tokens in loss
+        num_loss_tokens = batch_size * (seq_len - 1)  # seq_len - 1 due to shift
+        shift_gradient = (shift_probs - shift_one_hot) / num_loss_tokens
+
+        # Pad gradient back to full sequence length (last position has no loss)
+        loss_gradient = torch.zeros(batch_size, seq_len, self.vocab_size,
+                                    dtype=torch.float32, device=self.device)
+        loss_gradient[:, :-1, :] = shift_gradient
 
         # Cast gradient back to model dtype for backward pass
         if self.dtype == torch.bfloat16:

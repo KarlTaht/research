@@ -160,7 +160,15 @@ def main():
     if val_loader:
         print(f"  Val batches: {len(val_loader)}")
 
-    # Create model with bfloat16 (precision mixing handled internally)
+    # Parse dtype from config (default: bfloat16)
+    dtype_str = config['model'].get('dtype', 'bfloat16')
+    dtype_map = {
+        'float32': torch.float32,
+        'float16': torch.float16,
+        'bfloat16': torch.bfloat16,
+    }
+    model_dtype = dtype_map.get(dtype_str, torch.bfloat16)
+
     print("\nInitializing CustomTransformer...")
     model = CustomTransformerWrapper(
         vocab_size=len(tokenizer),
@@ -169,7 +177,7 @@ def main():
         n_heads=config['model']['n_heads'],
         d_model=config['model']['d_model'],
         d_ffn=config['model']['d_ffn'],
-        dtype=torch.bfloat16,
+        dtype=model_dtype,
     )
 
     print(f"  Parameters: {model.count_parameters():,}")

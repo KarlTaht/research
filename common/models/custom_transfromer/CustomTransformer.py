@@ -271,29 +271,37 @@ class CustomTransformer:
 
         # Next, backpropgate through attention blocks
         for block_step in range(self.n_blocks -1, -1, -1):
-        
-            # Compute loss gradient for FNN
-            grad_ffn_prenorm = grad
+
+            # === Backward through FFN layer norm ===
+            # Forward was: ffn_out = normalize_ffn(ffn_pre_norm)
+            grad_ffn_pre_norm = self.backward_normalize_ffn(grad, block_step)
+
             self.cache.store_gradient(
                 (block_step, 'ffn_pre_norm'),
-                grad_ffn_prenorm
+                grad_ffn_pre_norm
             )
 
-            # Split into FFN and skip-path
-            grad_ffn_res = grad_ffn_prenorm     # Goes into FFN
-            grad_post_attn = grad_ffn_prenorm   # Skip connection
+            # === Backward through residual: ffn_pre_norm = ffn_input + ffn_res ===
+            # Gradient splits to both paths
+            grad_ffn_res = grad_ffn_pre_norm     # Goes into FFN
+            grad_ffn_input_skip = grad_ffn_pre_norm   # Skip connection
 
             grad_ffn_input = self.backward_ffn(grad_ffn_res, block_step)
-            
-            grad_post_attn_norm = grad_post_attn + grad_ffn_input
-            grad_pre_attn_norm = grad_post_attn_norm
 
-            # Split into attention and bypass
-            grad_attn_res = grad_pre_attn_norm  # Goes into Attention
-            grad_skip_attn = grad_pre_attn_norm     # Skip connection
+            # Combine skip and FFN gradients
+            grad_post_attn_norm = grad_ffn_input_skip + grad_ffn_input
+
+            # === Backward through attention layer norm ===
+            # Forward was: post_attn_norm = normalize_attention(attn_pre_norm)
+            grad_attn_pre_norm = self.backward_normalize_attention(grad_post_attn_norm, block_step)
+
+            # === Backward through residual: attn_pre_norm = block_input + attn_res ===
+            grad_attn_res = grad_attn_pre_norm  # Goes into Attention
+            grad_skip_attn = grad_attn_pre_norm     # Skip connection
 
             grad_attn_input = self.backward_attention(grad_attn_res, block_step)
 
+            # Combine skip and attention gradients
             grad = grad_skip_attn + grad_attn_input
 
         self.backward_embed(grad)
@@ -599,7 +607,7 @@ class CustomTransformer:
         # dL / dW = input * pre-activation loss gradient
         self.cache.store_gradient(
             ('W1', block_step),
-            sum(ffn_input.transpose(-2, -1) @ grad_pre_activation).sum(dim=0)
+            (ffn_input.transpose(-2, -1) @ grad_pre_activation).sum(dim=0)
         )
 
         # dL / dX (ffn input) = grad_pre_activation * W1
@@ -615,53 +623,149 @@ class CustomTransformer:
     
     def normalize_attention(self, X, block_step):
         # PRECISION MIXING: Perform layer norm in float32 for numerical stability
+        eps = 1e-5
         if self.dtype == torch.bfloat16:
             X_fp32 = X.to(torch.float32)
-            X_fp32 = F.layer_norm(X_fp32, normalized_shape=(self.d_model,))
-            X = X_fp32.to(self.dtype)
+            mean = X_fp32.mean(dim=-1, keepdim=True)
+            var = X_fp32.var(dim=-1, keepdim=True, unbiased=False)
+            std = torch.sqrt(var + eps)
+            X_norm = ((X_fp32 - mean) / std).to(self.dtype)
+            std = std.to(self.dtype)
         else:
-            X = F.layer_norm(X, normalized_shape=(self.d_model,))
-        return (self.attention_gamma[block_step] * X) + self.attention_beta[block_step]
+            mean = X.mean(dim=-1, keepdim=True)
+            var = X.var(dim=-1, keepdim=True, unbiased=False)
+            std = torch.sqrt(var + eps)
+            X_norm = (X - mean) / std
+        # Cache normalized value and std for backward pass
+        self.cache.store_activation('block', block_step, 'attn_x_norm', X_norm)
+        self.cache.store_activation('block', block_step, 'attn_std', std)
+        return (self.attention_gamma[block_step] * X_norm) + self.attention_beta[block_step]
 
     def normalize_ffn(self, X, block_step):
         # PRECISION MIXING: Perform layer norm in float32 for numerical stability
+        eps = 1e-5
         if self.dtype == torch.bfloat16:
             X_fp32 = X.to(torch.float32)
-            X_fp32 = F.layer_norm(X_fp32, normalized_shape=(self.d_model,))
-            X = X_fp32.to(self.dtype)
+            mean = X_fp32.mean(dim=-1, keepdim=True)
+            var = X_fp32.var(dim=-1, keepdim=True, unbiased=False)
+            std = torch.sqrt(var + eps)
+            X_norm = ((X_fp32 - mean) / std).to(self.dtype)
+            std = std.to(self.dtype)
         else:
-            X = F.layer_norm(X, normalized_shape=(self.d_model,))
-        return (self.ffn_gamma[block_step] * X) + self.ffn_beta[block_step]
+            mean = X.mean(dim=-1, keepdim=True)
+            var = X.var(dim=-1, keepdim=True, unbiased=False)
+            std = torch.sqrt(var + eps)
+            X_norm = (X - mean) / std
+        # Cache normalized value and std for backward pass
+        self.cache.store_activation('block', block_step, 'ffn_x_norm', X_norm)
+        self.cache.store_activation('block', block_step, 'ffn_std', std)
+        return (self.ffn_gamma[block_step] * X_norm) + self.ffn_beta[block_step]
+
+    def backward_normalize_ffn(self, grad, block_step):
+        """Backward pass through FFN layer normalization."""
+        # Get cached values
+        x_norm = self.cache.get_activation('block', block_step, 'ffn_x_norm')
+        std = self.cache.get_activation('block', block_step, 'ffn_std')
+        gamma = self.ffn_gamma[block_step]
+
+        # Gradient through affine transform: y = gamma * x_norm + beta
+        # dL/dgamma = sum(dL/dy * x_norm) over batch and seq dimensions
+        self.cache.store_gradient(
+            ('ffn_gamma', block_step),
+            (grad * x_norm).sum(dim=(0, 1))  # [d_model]
+        )
+        # dL/dbeta = sum(dL/dy)
+        self.cache.store_gradient(
+            ('ffn_beta', block_step),
+            grad.sum(dim=(0, 1))  # [d_model]
+        )
+
+        # Gradient through layer norm: x_norm = (x - mean) / std
+        # dL/dx_norm = dL/dy * gamma
+        grad_x_norm = grad * gamma
+
+        # Compute in float32 for numerical stability
+        if self.dtype == torch.bfloat16:
+            grad_x_norm = grad_x_norm.to(torch.float32)
+            x_norm = x_norm.to(torch.float32)
+            std = std.to(torch.float32)
+
+        # Layer norm backward formula:
+        # dL/dx = (1/std) * (dL/dx_norm - mean(dL/dx_norm) - x_norm * mean(dL/dx_norm * x_norm))
+        mean_grad = grad_x_norm.mean(dim=-1, keepdim=True)
+        mean_grad_x = (grad_x_norm * x_norm).mean(dim=-1, keepdim=True)
+        grad_input = (1.0 / std) * (grad_x_norm - mean_grad - x_norm * mean_grad_x)
+
+        if self.dtype == torch.bfloat16:
+            grad_input = grad_input.to(self.dtype)
+
+        return grad_input
+
+    def backward_normalize_attention(self, grad, block_step):
+        """Backward pass through attention layer normalization."""
+        # Get cached values
+        x_norm = self.cache.get_activation('block', block_step, 'attn_x_norm')
+        std = self.cache.get_activation('block', block_step, 'attn_std')
+        gamma = self.attention_gamma[block_step]
+
+        # Gradient through affine transform: y = gamma * x_norm + beta
+        self.cache.store_gradient(
+            ('attention_gamma', block_step),
+            (grad * x_norm).sum(dim=(0, 1))  # [d_model]
+        )
+        self.cache.store_gradient(
+            ('attention_beta', block_step),
+            grad.sum(dim=(0, 1))  # [d_model]
+        )
+
+        # Gradient through layer norm
+        grad_x_norm = grad * gamma
+
+        # Compute in float32 for numerical stability
+        if self.dtype == torch.bfloat16:
+            grad_x_norm = grad_x_norm.to(torch.float32)
+            x_norm = x_norm.to(torch.float32)
+            std = std.to(torch.float32)
+
+        # Layer norm backward formula
+        mean_grad = grad_x_norm.mean(dim=-1, keepdim=True)
+        mean_grad_x = (grad_x_norm * x_norm).mean(dim=-1, keepdim=True)
+        grad_input = (1.0 / std) * (grad_x_norm - mean_grad - x_norm * mean_grad_x)
+
+        if self.dtype == torch.bfloat16:
+            grad_input = grad_input.to(self.dtype)
+
+        return grad_input
 
     def update_parameters(self, learning_rate):
         """
-        Update weights / biases using gradient 
+        Update weights / biases using gradient
         """
         lr = learning_rate
 
         self.output_projection -= lr * self.cache.get_gradient('output_projection')
 
         for block_step in range(self.n_blocks):
-            # TODO: FFN Normalization
-            # self.ffn_gamma[block_step] -= lr * self.cache.get_gradient('ffn_gamma')
-            # self.ffn_beta[block_step] -= lr * self.cache.get_gradient('ffn_beta')
+            # FFN Normalization
+            self.ffn_gamma[block_step] -= lr * self.cache.get_gradient(('ffn_gamma', block_step))
+            self.ffn_beta[block_step] -= lr * self.cache.get_gradient(('ffn_beta', block_step))
 
             # FFN
             self.W1[block_step] -= lr * self.cache.get_gradient(('W1', block_step))
             self.W2[block_step] -= lr * self.cache.get_gradient(('W2', block_step))
 
-            # TODO: Attention Normalization
-            # self.attention_gamma[block_step] -= lr * self.cache.get_gradient('attn_gamma')
-            # self.attention_beta[block_step] -= lr * self.cache.get_gradient('attn_beta')
+            # Attention Normalization
+            self.attention_gamma[block_step] -= lr * self.cache.get_gradient(('attention_gamma', block_step))
+            self.attention_beta[block_step] -= lr * self.cache.get_gradient(('attention_beta', block_step))
 
-            # Attention Output 
+            # Attention Output
             self.W_o[block_step] -= lr * self.cache.get_gradient(('W_o', block_step))
-        
+
             # QKV
             self.Q[block_step] -= lr * self.cache.get_gradient(('W_Q', block_step))
             self.K[block_step] -= lr * self.cache.get_gradient(('W_K', block_step))
             self.V[block_step] -= lr * self.cache.get_gradient(('W_V', block_step))
-        
+
         # Embedding
         self.vocab_embedding -= lr * self.cache.get_gradient('vocab_embedding')
         self.pos_embedding -= lr * self.cache.get_gradient('pos_embedding')

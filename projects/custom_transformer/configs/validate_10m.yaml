@@ -2,8 +2,11 @@
 # Purpose: Sanity check that training works before full run
 #
 # Model: ~10.4M params (d=288, L=8, balanced depth/width)
-# Data: 10K subset, 1 epoch
-# Expected runtime: ~5-10 minutes
+# Data: 50K subset, 3 epochs (~15 min)
+# Expected runtime: ~10-15 minutes
+#
+# NOTE: CustomTransformer with manual backprop requires higher LR than typical
+# PyTorch models due to gradient scaling. lr=0.1 works well; lr=0.0003 is too low.
 
 experiment_name: "custom_transformer_validate_10m"
 
@@ -13,19 +16,20 @@ model:
   n_heads: 4        # d_head = 72
   d_ffn: 1152       # 4x d_model
   max_seq_len: 256
+  dtype: float32    # Use float32 for numerical stability
 
 data:
   dataset: "tinystories"
   tokenizer: "tinystories_bpe_4096"
   max_length: 256
   use_subset: true
-  subset_size: 10000      # Small subset for quick validation
-  val_subset_size: 1000
+  subset_size: 50000      # Larger subset to verify learning
+  val_subset_size: 2000
 
 training:
   batch_size: 32
-  learning_rate: 0.0003
-  num_epochs: 1           # Single epoch
+  learning_rate: 0.03     # High LR needed for manual backprop model
+  num_epochs: 3           # Multiple epochs to verify loss decreases
 
   # Frequent logging for validation
   log_every: 50

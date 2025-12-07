@@ -16,6 +16,7 @@ model:
   n_heads: 4
   d_ffn: 512
   max_seq_len: 256
+  dtype: float32    # Use float32 for numerical stability
 
 data:
   dataset: "tinystories"  # Uses dataset registry
@@ -27,7 +28,7 @@ data:
 
 training:
   batch_size: 16
-  learning_rate: 0.0003
+  learning_rate: 0.1      # High LR needed for manual backprop model
   num_epochs: 5
 
   # Logging intervals

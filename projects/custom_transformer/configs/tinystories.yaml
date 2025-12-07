@@ -1,4 +1,7 @@
 # TinyStories training configuration
+#
+# NOTE: CustomTransformer with manual backprop requires higher LR than typical
+# PyTorch models due to gradient scaling. lr=0.1 works well; lr=0.0003 is too low.
 experiment_name: "custom_transformer_tinystories"
 
 model:
@@ -7,6 +10,7 @@ model:
   n_heads: 4
   d_ffn: 512
   max_seq_len: 256
+  dtype: float32    # Use float32 for numerical stability
 
 data:
   dataset: "tinystories"  # Uses dataset registry
@@ -17,7 +21,7 @@ data:
 
 training:
   batch_size: 16
-  learning_rate: 0.0003
+  learning_rate: 0.1      # High LR needed for manual backprop model
   num_epochs: 5
 
   # Logging intervals
