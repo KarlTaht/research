@@ -1,0 +1,47 @@
+# Full training config for ~10M parameter CustomTransformer
+# Purpose: Train on complete TinyStories dataset
+#
+# Model: ~10.4M params (d=288, L=8, balanced depth/width)
+# Data: Full ~2.1M training examples
+# Expected runtime: Several hours depending on hardware
+
+experiment_name: "custom_transformer_tinystories_10m"
+
+model:
+  d_model: 288
+  n_blocks: 8
+  n_heads: 4        # d_head = 72
+  d_ffn: 1152       # 4x d_model
+  max_seq_len: 256
+
+data:
+  dataset: "tinystories"
+  tokenizer: "tinystories_bpe_4096"
+  max_length: 256
+  # No subset - use full ~2.1M training examples
+  val_subset_size: 5000
+
+training:
+  batch_size: 32
+  learning_rate: 0.0003
+  num_epochs: 3
+
+  # Less frequent logging for full run
+  log_every: 100
+  eval_every: 1000
+  save_every: 1
+
+  # Stability
+  max_grad_norm: 1.0
+  max_nan_count: 10
+
+evaluation:
+  generation_prompts:
+    - "Once upon a time"
+    - "The little girl"
+    - "One day, a boy named"
+    - "In a small village"
+  max_generation_length: 100
+  temperature: 0.8
+  top_k: 50
+  evaluate_coherence: true  # Use Claude Haiku if ANTHROPIC_API_KEY is set

@@ -1,0 +1,47 @@
+# Quick validation config for ~10M parameter CustomTransformer
+# Purpose: Sanity check that training works before full run
+#
+# Model: ~10.4M params (d=288, L=8, balanced depth/width)
+# Data: 10K subset, 1 epoch
+# Expected runtime: ~5-10 minutes
+
+experiment_name: "custom_transformer_validate_10m"
+
+model:
+  d_model: 288
+  n_blocks: 8
+  n_heads: 4        # d_head = 72
+  d_ffn: 1152       # 4x d_model
+  max_seq_len: 256
+
+data:
+  dataset: "tinystories"
+  tokenizer: "tinystories_bpe_4096"
+  max_length: 256
+  use_subset: true
+  subset_size: 10000      # Small subset for quick validation
+  val_subset_size: 1000
+
+training:
+  batch_size: 32
+  learning_rate: 0.0003
+  num_epochs: 1           # Single epoch
+
+  # Frequent logging for validation
+  log_every: 50
+  eval_every: 100
+  save_every: 1
+
+  # Stability
+  max_grad_norm: 1.0
+  max_nan_count: 10
+
+evaluation:
+  generation_prompts:
+    - "Once upon a time"
+    - "The little girl"
+    - "One day, a boy named"
+  max_generation_length: 100
+  temperature: 0.8
+  top_k: 50
+  evaluate_coherence: false  # Skip for quick validation
