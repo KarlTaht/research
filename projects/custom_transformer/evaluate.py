@@ -1,21 +1,88 @@
 #!/usr/bin/env python3
-"""Evaluation script for CustomTransformer."""
+"""Evaluation script for CustomTransformer.
+
+Usage:
+    # Evaluate a checkpoint
+    python evaluate.py --checkpoint checkpoints/best.pt --config configs/tinystories.yaml
+
+    # Evaluate with text generation
+    python evaluate.py --checkpoint checkpoints/best.pt --config configs/tinystories.yaml --generate
+
+    # Quick evaluation (limited batches)
+    python evaluate.py --checkpoint checkpoints/best.pt --config configs/tinystories.yaml --max-batches 50
+
+    # Evaluate with custom tokenizer
+    python evaluate.py --checkpoint checkpoints/best.pt --config configs/tinystories_custom_tokenizer.yaml --generate
+"""
 
 import sys
 from pathlib import Path
 import argparse
+import yaml
 import torch
-from torch.utils.data import DataLoader
-from datasets import load_from_disk
-from transformers import GPT2TokenizerFast
+from transformers import GPT2TokenizerFast, PreTrainedTokenizerFast
 from tqdm import tqdm
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.models.custom_transfromer.wrapper import CustomTransformerWrapper
-from common.data import get_datasets_dir
-from train import prepare_dataset, load_config
+from common.data import load_training_data, get_dataset_config, get_models_dir
+
+
+def load_config(config_path: str = None):
+    """Load configuration from YAML file."""
+    if config_path is None:
+        config_path = Path(__file__).parent / "configs" / "tinystories.yaml"
+    with open(config_path) as f:
+        return yaml.safe_load(f)
+
+
+def load_tokenizer(config: dict):
+    """Load tokenizer based on config.
+
+    Supports:
+    - GPT-2 tokenizer (default): tokenizer: "gpt2" or omitted
+    - Custom tokenizer path: tokenizer: "path/to/tokenizer" or "tokenizers/name"
+
+    Args:
+        config: Configuration dict with optional 'tokenizer' key in 'data' section
+
+    Returns:
+        Loaded tokenizer with pad_token set
+    """
+    tokenizer_config = config.get('data', {}).get('tokenizer', 'gpt2')
+
+    if tokenizer_config == 'gpt2':
+        print("  Using GPT-2 tokenizer (vocab_size=50257)")
+        tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
+        tokenizer.pad_token = tokenizer.eos_token
+    else:
+        # Custom tokenizer - check if it's a relative path under assets/models/
+        tokenizer_path = Path(tokenizer_config)
+        if not tokenizer_path.is_absolute():
+            # Try assets/models/tokenizers/ first
+            assets_path = get_models_dir() / 'tokenizers' / tokenizer_config
+            if assets_path.exists():
+                tokenizer_path = assets_path
+            else:
+                # Try assets/models/ directly
+                assets_path = get_models_dir() / tokenizer_config
+                if assets_path.exists():
+                    tokenizer_path = assets_path
+
+        print(f"  Using custom tokenizer: {tokenizer_path}")
+        tokenizer = PreTrainedTokenizerFast.from_pretrained(str(tokenizer_path))
+
+        # Ensure pad_token is set (custom tokenizers should have it, but fallback)
+        if tokenizer.pad_token is None:
+            if tokenizer.eos_token is not None:
+                tokenizer.pad_token = tokenizer.eos_token
+            else:
+                tokenizer.add_special_tokens({'pad_token': '<pad>'})
+
+    print(f"  Vocab size: {len(tokenizer)}")
+    return tokenizer
 
 
 def evaluate_full(model, dataloader):
@@ -83,12 +150,11 @@ def main():
 
     config = load_config(args.config)
 
-    # Load tokenizer
+    # Load tokenizer (supports GPT-2 or custom tokenizers)
     print("Loading tokenizer...")
-    tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
-    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = load_tokenizer(config)
 
-    # Load model
+    # Load model from checkpoint
     print(f"Loading checkpoint: {args.checkpoint}")
     model = CustomTransformerWrapper(
         vocab_size=len(tokenizer),
@@ -102,46 +168,27 @@ def main():
 
     print(f"Model loaded: {model.count_parameters():,} parameters")
 
-    # Load test dataset
-    dataset_path = get_datasets_dir() / 'nampdn-ai' / 'tiny-textbooks'
-    if not dataset_path.exists():
-        print(f"Dataset not found at {dataset_path}")
-        print("Run train.py first to download the dataset.")
+    # Load validation data using dataset registry
+    dataset_name = config['data']['dataset']
+    print(f"\nLoading dataset: {dataset_name}")
+    dataset_config = get_dataset_config(dataset_name)
+    print(f"  Description: {dataset_config['description']}")
+
+    # Load validation split for evaluation
+    _, val_loader = load_training_data(
+        dataset_name,
+        tokenizer,
+        max_length=config['data']['max_length'],
+        batch_size=config['training']['batch_size'],
+        subset_size=config['data'].get('subset_size'),
+        val_subset_size=config['data'].get('val_subset_size', 1000),
+    )
+
+    if val_loader is None:
+        print("No validation data available for this dataset.")
         return
 
-    dataset = load_from_disk(dataset_path)
-
-    # Use test split if available, else validation, else last 10% of train
-    if isinstance(dataset, dict) or hasattr(dataset, 'keys'):
-        if 'test' in dataset:
-            test_data = dataset['test']
-        elif 'validation' in dataset:
-            test_data = dataset['validation']
-        elif 'train' in dataset:
-            n = len(dataset['train'])
-            test_data = dataset['train'].select(range(int(n * 0.9), n))
-        else:
-            first_key = list(dataset.keys())[0]
-            n = len(dataset[first_key])
-            test_data = dataset[first_key].select(range(int(n * 0.9), n))
-    else:
-        n = len(dataset)
-        test_data = dataset.select(range(int(n * 0.9), n))
-
-    print(f"Test set size: {len(test_data)}")
-
-    test_dataset = prepare_dataset(
-        test_data,
-        tokenizer,
-        config['data']['max_length'],
-        config['data'].get('text_column', 'textbook'),
-    )
-
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=config['training']['batch_size'],
-        shuffle=False,
-    )
+    print(f"  Val batches: {len(val_loader)}")
 
     # Evaluate
     print("\nEvaluating...")
@@ -149,7 +196,7 @@ def main():
         # Limited evaluation
         total_loss = 0.0
         num_batches = 0
-        for batch_idx, batch in enumerate(test_loader):
+        for batch_idx, batch in enumerate(val_loader):
             if batch_idx >= args.max_batches:
                 break
             with torch.no_grad():
@@ -162,7 +209,7 @@ def main():
             'num_tokens': num_batches * config['training']['batch_size'] * config['data']['max_length'],
         }
     else:
-        metrics = evaluate_full(model, test_loader)
+        metrics = evaluate_full(model, val_loader)
 
     print(f"\nResults:")
     print(f"  Loss: {metrics['loss']:.4f}")
@@ -172,13 +219,15 @@ def main():
     # Generate samples if requested
     if args.generate:
         print("\nGenerating samples...")
-        prompts = [
-            "The fundamental concept of",
-            "In mathematics,",
-            "Chapter 1:",
-        ]
+        # Use prompts from config if available
+        prompts = config.get('evaluation', {}).get('generation_prompts', [
+            "Once upon a time",
+            "The little girl",
+            "One day, a boy named",
+        ])
 
-        samples = generate_samples(model, tokenizer, prompts, max_length=100)
+        max_gen_length = config.get('evaluation', {}).get('max_generation_length', 100)
+        samples = generate_samples(model, tokenizer, prompts, max_length=max_gen_length)
 
         for sample in samples:
             print(f"\nPrompt: {sample['prompt']}")

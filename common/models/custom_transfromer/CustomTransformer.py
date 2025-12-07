@@ -427,9 +427,15 @@ class CustomTransformer:
         # We generated a global mask once, then slice the matrix for current seq_len
         scores += self.causal_mask[:seq_len, :seq_len]
  
-        # Compute (token, head) probabilities using softmax 
-        # How relevant is each query to each key? 
-        probabilities = F.softmax(scores, dim=-1)
+        # Compute (token, head) probabilities using softmax
+        # How relevant is each query to each key?
+        # PRECISION MIXING: Cast to float32 for numerical stability, clamp to prevent overflow
+        if self.dtype == torch.bfloat16:
+            scores_fp32 = scores.to(torch.float32)
+            scores_fp32 = torch.clamp(scores_fp32, min=-30.0, max=30.0)
+            probabilities = F.softmax(scores_fp32, dim=-1).to(self.dtype)
+        else:
+            probabilities = F.softmax(scores, dim=-1)
         self.cache.store_activation('block', block_step, 'probabilities', probabilities)
 
         # Considering the probabilities, what knowledge should be retrieved from the values?
@@ -608,11 +614,23 @@ class CustomTransformer:
         return scores / (self.d_head ** 0.5)
     
     def normalize_attention(self, X, block_step):
-        X = F.layer_norm(X, normalized_shape=(self.d_model,))
+        # PRECISION MIXING: Perform layer norm in float32 for numerical stability
+        if self.dtype == torch.bfloat16:
+            X_fp32 = X.to(torch.float32)
+            X_fp32 = F.layer_norm(X_fp32, normalized_shape=(self.d_model,))
+            X = X_fp32.to(self.dtype)
+        else:
+            X = F.layer_norm(X, normalized_shape=(self.d_model,))
         return (self.attention_gamma[block_step] * X) + self.attention_beta[block_step]
-    
+
     def normalize_ffn(self, X, block_step):
-        X = F.layer_norm(X, normalized_shape=(self.d_model,))
+        # PRECISION MIXING: Perform layer norm in float32 for numerical stability
+        if self.dtype == torch.bfloat16:
+            X_fp32 = X.to(torch.float32)
+            X_fp32 = F.layer_norm(X_fp32, normalized_shape=(self.d_model,))
+            X = X_fp32.to(self.dtype)
+        else:
+            X = F.layer_norm(X, normalized_shape=(self.d_model,))
         return (self.ffn_gamma[block_step] * X) + self.ffn_beta[block_step]
 
     def update_parameters(self, learning_rate):

@@ -95,9 +95,12 @@ class CustomTransformerWrapper:
 
         if labels is not None:
             labels = labels.to(self.device)
-            # Compute cross-entropy loss
+            # PRECISION MIXING: Compute loss in float32 for numerical stability
+            logits_for_loss = logits
+            if self.dtype == torch.bfloat16:
+                logits_for_loss = logits.to(torch.float32)
             loss = F.cross_entropy(
-                logits.view(-1, self.vocab_size),
+                logits_for_loss.view(-1, self.vocab_size),
                 labels.view(-1),
                 ignore_index=-100,  # Standard ignore index for padding
             )
@@ -110,22 +113,32 @@ class CustomTransformerWrapper:
         input_ids: torch.Tensor,
         labels: torch.Tensor,
         learning_rate: float = 0.001,
-    ) -> Dict[str, float]:
+        max_grad_norm: float = 1.0,
+    ) -> Dict[str, Any]:
         """
-        Complete training step with manual backprop.
+        Complete training step with manual backprop and numerical stability.
 
         This replaces the typical PyTorch pattern:
             outputs = model(input_ids, labels=labels)
             loss.backward()
             optimizer.step()
 
+        Includes:
+        - Float32 loss computation for numerical stability
+        - NaN/Inf detection with skip-update recovery
+        - Gradient clipping before parameter update
+
         Args:
             input_ids: Input token IDs [batch_size, seq_len]
             labels: Target token IDs [batch_size, seq_len]
             learning_rate: Learning rate for SGD update
+            max_grad_norm: Maximum gradient norm for clipping
 
         Returns:
-            Dict with 'loss' value
+            Dict with:
+                - 'loss': Loss value (float)
+                - 'status': 'ok', 'nan_detected', or 'nan_gradient'
+                - 'grad_norm': Gradient norm before clipping (if status='ok')
         """
         input_ids = input_ids.to(self.device)
         labels = labels.to(self.device)
@@ -133,29 +146,91 @@ class CustomTransformerWrapper:
         # Forward pass
         logits = self.model.forward(input_ids)
 
-        # Compute loss
+        # PRECISION MIXING: Compute loss in float32 for numerical stability
         batch_size, seq_len = input_ids.shape
+        logits_fp32 = logits.to(torch.float32) if self.dtype == torch.bfloat16 else logits
         loss = F.cross_entropy(
-            logits.view(-1, self.vocab_size),
+            logits_fp32.view(-1, self.vocab_size),
             labels.view(-1),
         )
 
-        # Compute loss gradient for backprop
+        # NaN/Inf detection in loss
+        if torch.isnan(loss) or torch.isinf(loss):
+            return {
+                'loss': float('nan'),
+                'status': 'nan_detected',
+                'grad_norm': None,
+            }
+
+        # Compute loss gradient for backprop in float32, then cast back
         # Cross-entropy gradient: softmax(logits) - one_hot(targets)
-        probs = F.softmax(logits, dim=-1)
-        one_hot = F.one_hot(labels, num_classes=self.vocab_size)
-        one_hot = one_hot.to(logits.dtype)
+        probs = F.softmax(logits_fp32, dim=-1)
+        one_hot = F.one_hot(labels, num_classes=self.vocab_size).to(torch.float32)
 
         # Normalize by batch size * seq_len (matches cross_entropy averaging)
         loss_gradient = (probs - one_hot) / (batch_size * seq_len)
 
+        # Cast gradient back to model dtype for backward pass
+        if self.dtype == torch.bfloat16:
+            loss_gradient = loss_gradient.to(torch.bfloat16)
+
         # Manual backward pass
         self.model.backward(loss_gradient)
+
+        # Check for NaN/Inf in gradients before update
+        if self._has_nan_gradients():
+            return {
+                'loss': loss.item(),
+                'status': 'nan_gradient',
+                'grad_norm': None,
+            }
+
+        # Gradient clipping
+        grad_norm = self._clip_gradients(max_grad_norm)
 
         # Manual parameter update
         self.model.update_parameters(learning_rate)
 
-        return {'loss': loss.item()}
+        return {
+            'loss': loss.item(),
+            'status': 'ok',
+            'grad_norm': grad_norm,
+        }
+
+    def _has_nan_gradients(self) -> bool:
+        """Check all cached gradients for NaN or Inf values."""
+        for key, grad in self.model.cache.gradients.items():
+            if torch.isnan(grad).any() or torch.isinf(grad).any():
+                return True
+        return False
+
+    def _clip_gradients(self, max_norm: float) -> float:
+        """
+        Clip gradients by global norm (manual implementation for raw tensors).
+
+        Args:
+            max_norm: Maximum allowed gradient norm
+
+        Returns:
+            Original gradient norm before clipping
+        """
+        # Collect all gradients
+        all_grads = list(self.model.cache.gradients.values())
+
+        if not all_grads:
+            return 0.0
+
+        # Compute total norm (L2 norm across all gradients)
+        total_norm_sq = sum(g.pow(2).sum() for g in all_grads)
+        total_norm = torch.sqrt(total_norm_sq).item()
+
+        # Clip if norm exceeds max_norm
+        if total_norm > max_norm:
+            clip_coef = max_norm / (total_norm + 1e-6)
+            for key in self.model.cache.gradients:
+                self.model.cache.gradients[key] = self.model.cache.gradients[key] * clip_coef
+
+        return total_norm
 
     def eval(self):
         """Set to evaluation mode (no-op for manual backprop model)."""
