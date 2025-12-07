@@ -45,8 +45,11 @@ runs/
 lightning_logs/
 
 # ML-specific: Datasets & Assets
-assets/
-datasets/
+assets/**
+!assets/
+!assets/**/
+!assets/**/*.md
+/datasets/
 papers/*/data/
 projects/*/data/
 exploratory/*/data/
