@@ -245,6 +245,12 @@ def main():
     max_grad_norm = config['training'].get('max_grad_norm', 1.0)
     max_nan_count = config['training'].get('max_nan_count', 10)
 
+    # Learning rate schedule
+    base_lr = config['training']['learning_rate']
+    min_lr = config['training'].get('min_learning_rate', base_lr * 0.1)
+    lr_decay = config['training'].get('lr_decay', None)  # 'cosine' or 'linear'
+    total_steps = num_epochs * len(train_loader)
+
     # Generation prompts for evaluation
     generation_prompts = config.get('evaluation', {}).get(
         'generation_prompts',
@@ -269,6 +275,17 @@ def main():
 
             input_ids = batch['input_ids']
             labels = batch['labels']
+
+            # Compute learning rate with optional decay
+            if lr_decay == 'cosine':
+                import math
+                progress = global_step / total_steps
+                learning_rate = min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * progress))
+            elif lr_decay == 'linear':
+                progress = global_step / total_steps
+                learning_rate = base_lr - (base_lr - min_lr) * progress
+            else:
+                learning_rate = base_lr
 
             # Training step with stability features
             result = model.train_step(

@@ -205,7 +205,7 @@ class CustomTransformerWrapper:
             }
 
         # Gradient clipping
-        grad_norm = self._clip_gradients(max_grad_norm)
+        grad_norm_before, grad_norm_after = self._clip_gradients(max_grad_norm)
 
         # Manual parameter update
         self.model.update_parameters(learning_rate)
@@ -213,7 +213,8 @@ class CustomTransformerWrapper:
         return {
             'loss': loss.item(),
             'status': 'ok',
-            'grad_norm': grad_norm,
+            'grad_norm': grad_norm_after,
+            'grad_norm_before_clip': grad_norm_before,
         }
 
     def _has_nan_gradients(self) -> bool:
@@ -223,7 +224,7 @@ class CustomTransformerWrapper:
                 return True
         return False
 
-    def _clip_gradients(self, max_norm: float) -> float:
+    def _clip_gradients(self, max_norm: float) -> tuple:
         """
         Clip gradients by global norm (manual implementation for raw tensors).
 
@@ -231,25 +232,29 @@ class CustomTransformerWrapper:
             max_norm: Maximum allowed gradient norm
 
         Returns:
-            Original gradient norm before clipping
+            Tuple of (grad_norm_before_clip, grad_norm_after_clip)
         """
         # Collect all gradients
         all_grads = list(self.model.cache.gradients.values())
 
         if not all_grads:
-            return 0.0
+            return 0.0, 0.0
 
         # Compute total norm (L2 norm across all gradients)
         total_norm_sq = sum(g.pow(2).sum() for g in all_grads)
         total_norm = torch.sqrt(total_norm_sq).item()
+        grad_norm_before = total_norm
 
         # Clip if norm exceeds max_norm
         if total_norm > max_norm:
             clip_coef = max_norm / (total_norm + 1e-6)
             for key in self.model.cache.gradients:
                 self.model.cache.gradients[key] = self.model.cache.gradients[key] * clip_coef
+            grad_norm_after = max_norm
+        else:
+            grad_norm_after = total_norm
 
-        return total_norm
+        return grad_norm_before, grad_norm_after
 
     def eval(self):
         """Set to evaluation mode (no-op for manual backprop model)."""
@@ -370,9 +375,17 @@ class CustomTransformerWrapper:
         """
         checkpoint = torch.load(path, map_location='cpu', weights_only=False)
 
-        # Handle both old format (flat) and new format (nested state_dict)
-        if 'state_dict' in checkpoint:
+        # Handle multiple checkpoint formats:
+        # 1. CheckpointManager format: 'model_state_dict'
+        # 2. CustomTransformer.save_checkpoint format: 'state_dict'
+        # 3. Legacy format: direct tensor storage
+        if 'model_state_dict' in checkpoint:
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            print(f"Checkpoint loaded: {path}")
+            return checkpoint.get('model_config', {})
+        elif 'state_dict' in checkpoint:
             self.model.load_state_dict(checkpoint['state_dict'])
+            print(f"Checkpoint loaded: {path}")
             return checkpoint.get('metadata', {})
         else:
             # Legacy format - direct tensor storage
@@ -399,8 +412,8 @@ class CustomTransformerWrapper:
         """
         checkpoint = torch.load(path, map_location='cpu', weights_only=False)
 
-        # Get config from checkpoint
-        config = checkpoint.get('config', {})
+        # Get config from checkpoint (handle multiple formats)
+        config = checkpoint.get('model_config') or checkpoint.get('config', {})
 
         # Parse dtype from string if present
         dtype = None
@@ -426,13 +439,15 @@ class CustomTransformerWrapper:
             dtype=dtype,
         )
 
-        # Load state
-        if 'state_dict' in checkpoint:
+        # Load state (handle multiple formats)
+        if 'model_state_dict' in checkpoint:
+            wrapper.model.load_state_dict(checkpoint['model_state_dict'])
+        elif 'state_dict' in checkpoint:
             wrapper.model.load_state_dict(checkpoint['state_dict'])
         else:
             # Legacy format
             legacy_state = {k: v for k, v in checkpoint.items()
-                          if k not in ('config', 'metadata')}
+                          if k not in ('config', 'metadata', 'model_config')}
             wrapper.model.load_state_dict(legacy_state, strict=False)
 
         print(f"Model loaded from checkpoint: {path}")
