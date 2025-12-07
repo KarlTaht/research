@@ -32,6 +32,26 @@ from tqdm import tqdm
 import argparse
 import time
 
+
+class TeeLogger:
+    """Write to both stdout and a log file."""
+
+    def __init__(self, log_file: Path):
+        self.terminal = sys.stdout
+        self.log_file = open(log_file, 'w', buffering=1)  # Line buffered
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log_file.write(message)
+        self.log_file.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log_file.flush()
+
+    def close(self):
+        self.log_file.close()
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -101,7 +121,18 @@ def main():
     parser.add_argument('--config', type=str, default=None, help='Path to config.yaml')
     parser.add_argument('--resume', type=str, default=None, help='Resume from checkpoint (path or "latest")')
     parser.add_argument('--no-coherence-eval', action='store_true', help='Skip Claude Haiku coherence evaluation')
+    parser.add_argument('--log-file', type=str, default=None, help='Log output to file (can tail -f)')
     args = parser.parse_args()
+
+    # Setup file logging if requested
+    tee_logger = None
+    if args.log_file:
+        log_path = Path(args.log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        tee_logger = TeeLogger(log_path)
+        sys.stdout = tee_logger
+        sys.stderr = tee_logger
+        print(f"Logging to: {log_path}")
 
     config = load_config(args.config)
     print("Configuration:")
@@ -370,6 +401,12 @@ def main():
     summary = logger.get_summary()
     print(f"  Run ID: {summary['run_id']}")
     print("="*50)
+
+    # Cleanup file logger
+    if tee_logger:
+        sys.stdout = tee_logger.terminal
+        sys.stderr = tee_logger.terminal
+        tee_logger.close()
 
 
 if __name__ == '__main__':
