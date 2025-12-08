@@ -25,6 +25,7 @@ Usage:
 
 import sys
 from pathlib import Path
+import math
 import yaml
 import torch
 from transformers import GPT2TokenizerFast, PreTrainedTokenizerFast
@@ -124,17 +125,18 @@ def main():
     parser.add_argument('--log-file', type=str, default=None, help='Log output to file (can tail -f)')
     args = parser.parse_args()
 
-    # Setup file logging if requested
-    tee_logger = None
-    if args.log_file:
-        log_path = Path(args.log_file)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        tee_logger = TeeLogger(log_path)
-        sys.stdout = tee_logger
-        sys.stderr = tee_logger
-        print(f"Logging to: {log_path}")
-
     config = load_config(args.config)
+    experiment_name = config.get('experiment_name', 'custom_transformer')
+
+    # Setup file logging (automatic based on experiment_name, or override with --log-file)
+    tee_logger = None
+    log_path = Path(args.log_file) if args.log_file else Path(__file__).parent / 'logs' / f'{experiment_name}.log'
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    tee_logger = TeeLogger(log_path)
+    sys.stdout = tee_logger
+    sys.stderr = tee_logger
+    print(f"Logging to: {log_path}")
+
     print("Configuration:")
     print(yaml.dump(config, default_flow_style=False))
 
@@ -178,24 +180,26 @@ def main():
         d_model=config['model']['d_model'],
         d_ffn=config['model']['d_ffn'],
         dtype=model_dtype,
+        pad_token_id=tokenizer.pad_token_id,
     )
 
     print(f"  Parameters: {model.count_parameters():,}")
     print(f"  Device: {model.device}")
     print(f"  Dtype: {model.dtype}")
 
-    # Setup checkpoint manager
-    checkpoint_dir = Path(__file__).parent / 'checkpoints'
+    # Setup checkpoint manager (use experiment_name as subdirectory to avoid overwrites)
+    experiment_name = config.get('experiment_name', 'custom_transformer')
+    checkpoint_dir = Path(__file__).parent / 'checkpoints' / experiment_name
     checkpoint_manager = CheckpointManager(
         checkpoint_dir=str(checkpoint_dir),
         model=model,
-        experiment_name=config.get('experiment_name', 'custom_transformer'),
+        experiment_name=experiment_name,
         max_checkpoints=5,
     )
 
     # Setup training logger
     logger = TrainingLogger(
-        experiment_name=config.get('experiment_name', 'custom_transformer'),
+        experiment_name=experiment_name,
         model_config=config['model'],
         train_config=config['training'],
         log_every_n_steps=config['training'].get('log_every', 100),
@@ -251,6 +255,12 @@ def main():
     lr_decay = config['training'].get('lr_decay', None)  # 'cosine' or 'linear'
     total_steps = num_epochs * len(train_loader)
 
+    # Warmup config (default: no warmup)
+    warmup_ratio = config['training'].get('warmup_ratio', 0.0)
+    warmup_steps = config['training'].get('warmup_steps', int(total_steps * warmup_ratio))
+    if warmup_steps > 0:
+        print(f"  Warmup: {warmup_steps} steps ({warmup_ratio*100:.1f}% of total)")
+
     # Generation prompts for evaluation
     generation_prompts = config.get('evaluation', {}).get(
         'generation_prompts',
@@ -276,14 +286,20 @@ def main():
             input_ids = batch['input_ids']
             labels = batch['labels']
 
-            # Compute learning rate with optional decay
-            if lr_decay == 'cosine':
-                import math
-                progress = global_step / total_steps
-                learning_rate = min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * progress))
+            # Compute learning rate with warmup and optional decay
+            if global_step < warmup_steps:
+                # Linear warmup from 0 to base_lr
+                learning_rate = base_lr * (global_step / warmup_steps) if warmup_steps > 0 else base_lr
+            elif lr_decay == 'cosine':
+                # Cosine decay from base_lr to min_lr (after warmup)
+                decay_steps = total_steps - warmup_steps
+                decay_progress = (global_step - warmup_steps) / decay_steps if decay_steps > 0 else 1.0
+                learning_rate = min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * decay_progress))
             elif lr_decay == 'linear':
-                progress = global_step / total_steps
-                learning_rate = base_lr - (base_lr - min_lr) * progress
+                # Linear decay from base_lr to min_lr (after warmup)
+                decay_steps = total_steps - warmup_steps
+                decay_progress = (global_step - warmup_steps) / decay_steps if decay_steps > 0 else 1.0
+                learning_rate = base_lr - (base_lr - min_lr) * decay_progress
             else:
                 learning_rate = base_lr
 

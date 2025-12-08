@@ -1,14 +1,13 @@
-# Quick validation config for ~10M parameter CustomTransformer
-# Purpose: Sanity check that training works before full run
+# Full training config for ~10M parameter CustomTransformer
+# Purpose: Train on full TinyStories dataset
 #
 # Model: ~10.4M params (d=288, L=8, balanced depth/width)
-# Data: 1K subset, 3 epochs (~1-2 min)
-# Expected runtime: ~1-2 minutes
+# Data: Full TinyStories dataset, 3 epochs
 #
 # NOTE: CustomTransformer with manual backprop requires higher LR than typical
-# PyTorch models due to gradient scaling. lr=0.03 works well; lr=0.0003 is too low.
+# PyTorch models due to gradient scaling.
 
-experiment_name: "custom_transformer_validate_10m"
+experiment_name: "tinystories_10m_full_3ep"
 
 model:
   d_model: 288
@@ -22,21 +21,19 @@ data:
   dataset: "tinystories"
   tokenizer: "tinystories_bpe_4096"
   max_length: 1024
-  use_subset: true
-  subset_size: 50000      # Larger subset for real training
-  val_subset_size: 2000
+  # No subset - use full dataset
 
 training:
-  batch_size: 16  # Doubled for better gradient stability
+  batch_size: 16
   learning_rate: 0.01       # Peak LR (reached after warmup)
   min_learning_rate: 0.003  # Final LR after decay
   lr_decay: cosine          # Cosine annealing schedule
-  warmup_ratio: 0.05        # 5% warmup (ramps 0 -> 0.01)
-  num_epochs: 5             # 5 epochs for training run
+  warmup_ratio: 0.05        # 5% warmup
+  num_epochs: 3
 
-  # Frequent logging for validation
-  log_every: 50
-  eval_every: 100
+  # Less frequent logging for full training
+  log_every: 100
+  eval_every: 500
   save_every: 1
 
   # Stability
@@ -51,4 +48,4 @@ evaluation:
   max_generation_length: 100
   temperature: 0.8
   top_k: 50
-  evaluate_coherence: false  # Skip for quick validation
+  evaluate_coherence: false

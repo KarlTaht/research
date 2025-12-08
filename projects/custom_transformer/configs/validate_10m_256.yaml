@@ -1,0 +1,39 @@
+# Validation config with 256-length sequences and fixed LR
+# Purpose: Test learning rate without decay, faster iteration
+
+experiment_name: "custom_transformer_validate_10m_256"
+
+model:
+  d_model: 288
+  n_blocks: 8
+  n_heads: 4
+  d_ffn: 1152
+  max_seq_len: 256    # Match data length
+  dtype: float32
+
+data:
+  dataset: "tinystories"
+  tokenizer: "tinystories_bpe_4096"
+  max_length: 256     # 4x shorter = 4x faster
+  subset_size: 50000
+  val_subset_size: 2000
+
+training:
+  batch_size: 16
+  learning_rate: 0.0003       # Fixed LR, no decay
+  num_epochs: 10
+  log_every: 50
+  eval_every: 100
+  max_grad_norm: 1.0
+  max_nan_count: 10
+  # No lr_decay - constant LR to see raw behavior
+
+evaluation:
+  generation_prompts:
+    - "Once upon a time"
+    - "The little girl"
+    - "One day, a boy named"
+  max_generation_length: 100
+  temperature: 0.8
+  top_k: 50
+  evaluate_coherence: false

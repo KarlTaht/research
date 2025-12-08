@@ -163,6 +163,7 @@ def main():
         n_heads=config['model']['n_heads'],
         d_model=config['model']['d_model'],
         d_ffn=config['model']['d_ffn'],
+        pad_token_id=tokenizer.pad_token_id,
     )
     model.load_checkpoint(args.checkpoint)
 

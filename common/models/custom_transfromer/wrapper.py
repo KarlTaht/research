@@ -37,6 +37,7 @@ class CustomTransformerWrapper:
         d_ffn: int = 128,
         device: Optional[str] = None,
         dtype: Optional[torch.dtype] = None,
+        pad_token_id: Optional[int] = None,
     ):
         """
         Initialize CustomTransformerWrapper.
@@ -50,9 +51,11 @@ class CustomTransformerWrapper:
             d_ffn: Feed-forward network dimension
             device: Device to use (auto-detected if None)
             dtype: Data type (default: bfloat16)
+            pad_token_id: Padding token ID (if provided, padding tokens are masked in loss)
         """
         self.vocab_size = vocab_size
         self.is_encoder_decoder = False
+        self.pad_token_id = pad_token_id
 
         config = CustomTransformerConfig(
             vocab_size=vocab_size,
@@ -95,6 +98,12 @@ class CustomTransformerWrapper:
 
         if labels is not None:
             labels = labels.to(self.device)
+
+            # Dynamic padding mask - ignore padding tokens in loss
+            if self.pad_token_id is not None:
+                labels = labels.clone()
+                labels[labels == self.pad_token_id] = -100
+
             # PRECISION MIXING: Compute loss in float32 for numerical stability
             logits_for_loss = logits
             if self.dtype == torch.bfloat16:
@@ -107,7 +116,7 @@ class CustomTransformerWrapper:
             loss = F.cross_entropy(
                 shift_logits.view(-1, self.vocab_size),
                 shift_labels.view(-1),
-                ignore_index=-100,  # Standard ignore index for padding
+                ignore_index=-100,  # Ignore masked padding tokens
             )
             output['loss'] = loss
 
@@ -148,6 +157,11 @@ class CustomTransformerWrapper:
         input_ids = input_ids.to(self.device)
         labels = labels.to(self.device)
 
+        # Dynamic padding mask - ignore padding tokens in loss
+        if self.pad_token_id is not None:
+            labels = labels.clone()
+            labels[labels == self.pad_token_id] = -100
+
         # Forward pass
         logits = self.model.forward(input_ids)
 
@@ -161,9 +175,18 @@ class CustomTransformerWrapper:
         shift_logits = logits_fp32[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
 
+        # Create mask for valid (non-padding) positions
+        valid_mask = (shift_labels != -100)  # [batch, seq-1]
+        num_valid_tokens = valid_mask.sum().item()
+
+        # For loss computation, temporarily replace -100 with 0 (valid index)
+        shift_labels_for_loss = shift_labels.clone()
+        shift_labels_for_loss[~valid_mask] = 0
+
         loss = F.cross_entropy(
             shift_logits.view(-1, self.vocab_size),
             shift_labels.view(-1),
+            ignore_index=-100,
         )
 
         # NaN/Inf detection in loss
@@ -178,11 +201,16 @@ class CustomTransformerWrapper:
         # Cross-entropy gradient: softmax(logits) - one_hot(targets)
         # Must use SHIFTED logits/labels to match the loss computation
         shift_probs = F.softmax(shift_logits, dim=-1)
-        shift_one_hot = F.one_hot(shift_labels, num_classes=self.vocab_size).to(torch.float32)
 
-        # Gradient for shifted positions, normalized by number of tokens in loss
-        num_loss_tokens = batch_size * (seq_len - 1)  # seq_len - 1 due to shift
-        shift_gradient = (shift_probs - shift_one_hot) / num_loss_tokens
+        # Use valid labels for one_hot (replace -100 with 0 temporarily)
+        shift_one_hot = F.one_hot(shift_labels_for_loss, num_classes=self.vocab_size).to(torch.float32)
+
+        # Gradient for shifted positions, normalized by number of VALID tokens
+        # Zero out gradient for padding positions
+        shift_gradient = (shift_probs - shift_one_hot)
+        shift_gradient = shift_gradient * valid_mask.unsqueeze(-1).float()  # Zero out padding
+        if num_valid_tokens > 0:
+            shift_gradient = shift_gradient / num_valid_tokens
 
         # Pad gradient back to full sequence length (last position has no loss)
         loss_gradient = torch.zeros(batch_size, seq_len, self.vocab_size,

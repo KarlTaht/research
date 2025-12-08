@@ -508,13 +508,13 @@ class CustomTransformer:
         # === 1C. Backward through Q @ K.T
         # Get cached values, # [n_head, seq_len, d_model]
         # We already got V_act
-        Q_act = self.cache.get_activation('block', block_step, 'Q') 
+        Q_act = self.cache.get_activation('block', block_step, 'Q')
         K_act = self.cache.get_activation('block', block_step, 'K')
         # scores = Q @ K.T
-        # dL / dK = dL/dS * K
-        # dL / dQ = Q.T @ dL/dS
-        grad_K = grad_scores @ K_act
-        grad_Q = grad_scores.transpose(-2,-1) @ Q_act
+        # For C = A @ B.T: dL/dA = dL/dC @ B, dL/dB = dL/dC.T @ A
+        # Therefore: dL/dQ = dL/dscores @ K, dL/dK = dL/dscores.T @ Q
+        grad_Q = grad_scores @ K_act
+        grad_K = grad_scores.transpose(-2,-1) @ Q_act
 
         # === 1B. Backward through re-shape QKV
         grad_Q = grad_Q.transpose(1,2).contiguous().view(batch_size, seq_len, self.d_model)
