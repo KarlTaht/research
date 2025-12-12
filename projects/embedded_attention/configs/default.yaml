@@ -1,0 +1,39 @@
+# Embedded Attention Configuration
+# Chunk-based conversational memory with RAG
+
+embedding:
+  model_name: "BAAI/bge-small-en-v1.5"  # Fast, 33M params, 384 dims
+  dim: 384
+
+chunking:
+  max_tokens: 512  # Maximum tokens per chunk
+  split_on_paragraphs: true  # Split on paragraph boundaries first
+
+retrieval:
+  semantic_top_k: 5  # Number of chunks from semantic search
+  recent_n: 2  # Recent chunks to always include
+  min_similarity: 0.7  # Minimum cosine similarity threshold
+  include_linked: true  # Include tool_call/tool_result pairs
+  cross_conversation: false  # Enable cross-conversation retrieval
+
+context:
+  total_budget: 8192  # Total context window tokens
+  reserved_for_generation: 1024  # Tokens for model output
+  reserved_for_current: 1000  # Tokens for current user message
+
+storage:
+  db_path: "assets/outputs/embedded_attention/chunks.duckdb"
+
+generation:
+  backend: "huggingface"  # "huggingface" or "api"
+  model_name: "mistralai/Mistral-7B-Instruct-v0.2"  # Or any HF model
+  temperature: 0.7
+  max_new_tokens: 1024
+  do_sample: true
+  top_p: 0.9
+
+# Evaluation settings
+evaluation:
+  benchmark: "LongMemEval"
+  dataset_name: "xiaowu0162/LongMemEval"
+  output_dir: "assets/outputs/embedded_attention/eval"

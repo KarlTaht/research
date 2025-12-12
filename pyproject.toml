@@ -71,16 +71,22 @@ nlp = [
     "sacremoses>=0.0.53",
 ]
 
+embedded_attention = [
+    # Embedded attention project dependencies
+    "sentence-transformers>=2.2.0",
+    "tiktoken>=0.5.0",
+]
+
 all = [
-    "ml-research[dev,cv,nlp]",
+    "ml-research[dev,cv,nlp,embedded_attention]",
 ]
 
 [build-system]
 requires = ["setuptools>=68.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["common"]
+[tool.setuptools.packages.find]
+include = ["common*", "projects*"]
 
 [tool.black]
 line-length = 100
