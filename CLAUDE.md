@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-ML research monorepo at `~/research/` for implementing papers and conducting original research. Uses centralized assets with symlinks, shared `common/` package for reusable code, and `uv` for fast package management.
+ML research monorepo at `~/research/` for conducting original ML research. Uses centralized assets with symlinks, shared `common/` package for reusable code, and `uv` for fast package management.
 
 ## Essential Commands
 
@@ -66,18 +66,18 @@ python tools/query_experiments.py --compare exp_001 exp_002
 
 ### Running Experiments
 ```bash
-# From paper directory
-cd papers/attention_is_all_you_need
-python train.py --config config.yaml
+# From project directory
+cd projects/custom_transformer
+python train.py --config configs/tinystories.yaml
 
 # From repo root
-python -m papers.attention_is_all_you_need.train
+python -m projects.custom_transformer.train
 ```
 
 ## Architecture
 
 ### Monorepo Structure
-- **`common/`**: Shared Python package for reusable code across all papers/projects
+- **`common/`**: Shared Python package for reusable code across all projects
   - `models/`: Model architectures
     - `base.py`: `BaseLanguageModel` - abstract base class for all language models
   - `training/`: Training loops, optimizers, schedulers
@@ -92,12 +92,9 @@ python -m papers.attention_is_all_you_need.train
   - `models/`: Pretrained models and checkpoints
   - `outputs/experiments/`: Experiment results (Parquet files)
 
-- **`papers/[paper-name]/`**: One directory per paper implementation
+- **`projects/[project-name]/`**: Research projects
   - Symlinks to `assets/datasets/` for data (e.g., `data -> ../../assets/datasets/squad`)
   - Contains `train.py`, `evaluate.py`, `config.yaml`
-
-- **`projects/[project-name]/`**: Original research projects
-  - Similar structure to papers but with more flexibility
 
 - **`tools/`**: Standalone CLI utilities
   - `download_hf_dataset.py`: CLI for downloading HF datasets
@@ -152,17 +149,17 @@ dataset = load_from_disk(get_datasets_dir() / 'squad')
 Large files (datasets, models, outputs) are:
 1. Stored centrally in `assets/` directory
 2. GITIGNORED (never committed)
-3. Symlinked from papers/projects to avoid duplication
+3. Symlinked from projects to avoid duplication
 
 ```bash
 # Download once
 python tools/download_hf_dataset.py --name wmt14
 
-# Use in multiple papers via symlinks
-cd papers/transformer_paper
+# Use in multiple projects via symlinks
+cd projects/custom_transformer
 ln -s ../../assets/datasets/wmt14 data
 
-cd ../another_paper
+cd ../embedded_attention
 ln -s ../../assets/datasets/wmt14 data
 ```
 
@@ -244,20 +241,19 @@ samples = evaluator.generate_samples(
 results_df = evaluator.create_metrics_dataframe(metrics, epoch=5, split='val')
 ```
 
-**Example Project**: `projects/simple_lstm/`
+**Example Project**: `projects/custom_transformer/`
 
 A complete working example demonstrating:
-- LSTM model extending `BaseLanguageModel`
-- Training with `Evaluator` framework
-- Experiment tracking with Parquet storage
-- TinyStories dataset with GPT-2 tokenization
+- Custom transformer with manual backpropagation
+- Training with evaluation and checkpointing
+- TinyStories dataset with GPT-2 or custom tokenization
 
-See `projects/simple_lstm/README.md` for full documentation.
+See `projects/custom_transformer/CLAUDE.md` for full documentation.
 
 ## Key Workflows
 
-### Adding a New Paper/Project Implementation
-1. `mkdir -p papers/paper_name` (or `projects/project_name`)
+### Adding a New Project
+1. `mkdir -p projects/project_name`
 2. Create model extending `BaseLanguageModel`:
    ```python
    from common.models import BaseLanguageModel
@@ -272,12 +268,12 @@ See `projects/simple_lstm/README.md` for full documentation.
 6. Download dataset: `python tools/download_hf_dataset.py --name dataset_name`
 7. Run training and track experiments
 
-See `projects/simple_lstm/` for a complete working example.
+See `projects/custom_transformer/` for a complete working example.
 
 ### Adding Reusable Code to Common
 1. Move code to appropriate `common/` subdirectory
 2. Update `common/[submodule]/__init__.py` to export it
-3. Update imports in papers/projects
+3. Update imports in projects
 4. Document with docstrings
 
 ### Environment Details
@@ -292,6 +288,6 @@ See `projects/simple_lstm/` for a complete working example.
 - **Never commit** `assets/`, checkpoints (`.pt`, `.pth`, `.ckpt`), or experiment logs
 - **Always activate** `.venv` before running any Python commands
 - **Use `uv`** instead of `pip` for installing packages
-- **Use symlinks** to share datasets across papers/projects
-- **Per-project Docker**: Each paper/project can have its own `docker/` subdirectory (not root-level)
+- **Use symlinks** to share datasets across projects
+- **Per-project Docker**: Each project can have its own `docker/` subdirectory (not root-level)
 - **Line length**: 100 characters (black/ruff configured)

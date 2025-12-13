@@ -1,6 +1,6 @@
 # ML Research Monorepo
 
-A monorepo for machine learning research, paper implementations, and original research projects.
+A monorepo for machine learning research and original research projects.
 
 ## Directory Structure
 
@@ -21,16 +21,7 @@ A monorepo for machine learning research, paper implementations, and original re
 │   ├── utils/                  # Logging, metrics, checkpointing, tracking
 │   └── visualization/          # Plotting, analysis, figure generation
 │
-├── papers/                     # Paper implementations
-│   └── [paper-name]/           # One directory per paper
-│       ├── README.md
-│       ├── train.py
-│       ├── evaluate.py
-│       ├── config.yaml
-│       ├── docker/             # Optional Docker setup
-│       └── data -> ../../assets/datasets/[name]  # Symlink
-│
-├── projects/                   # Original research projects
+├── projects/                   # Research projects
 │   └── [project-name]/
 │       ├── README.md
 │       ├── experiments/
@@ -47,6 +38,16 @@ A monorepo for machine learning research, paper implementations, and original re
     └── [date-or-topic]/
         └── *.ipynb
 ```
+
+## Current Projects
+
+| Project | Description |
+|---------|-------------|
+| **custom_transformer** | Decoder-only transformer with manual backpropagation (no autograd) for educational purposes |
+| **embedded_attention** | Chunk-based conversational memory system using RAG with DuckDB vector storage |
+| **continual_learning** | Experiments to build intuition for catastrophic forgetting in transformers |
+| **research_agent** | Research assistant that reads papers, maintains hypotheses, and synthesizes findings |
+| **research_manager_agent** | Agent for navigating and managing this ML research monorepo |
 
 ## Setup
 
@@ -136,35 +137,6 @@ from common.utils import setup_logger, get_device
 from common.visualization import plot_training_curves, plot_confusion_matrix
 ```
 
-### Adding a New Paper Implementation
-
-1. Create a directory under `papers/`:
-   ```bash
-   mkdir -p papers/attention_is_all_you_need
-   cd papers/attention_is_all_you_need
-   ```
-
-2. Create necessary files:
-   ```bash
-   touch README.md train.py evaluate.py config.yaml
-   ```
-
-3. Symlink to dataset (if needed):
-   ```bash
-   ln -s ../../assets/datasets/wmt14 data
-   ```
-
-4. Implement using common utilities:
-   ```python
-   # train.py
-   from common.models import Transformer
-   from common.training import Trainer
-   from common.data import create_dataloader
-   from common.utils import save_checkpoint
-
-   # Your implementation here
-   ```
-
 ### Adding a New Research Project
 
 1. Create project directory:
@@ -221,8 +193,8 @@ model_path = download_model('bert-base-uncased')
 #### Managing Downloaded Assets
 
 ```bash
-# Symlink from a paper/project
-cd papers/attention_is_all_you_need
+# Symlink from a project
+cd projects/my_project
 ln -s ../../assets/datasets/wmt14 data
 
 # Download from other sources
@@ -236,38 +208,38 @@ wget https://download.pytorch.org/models/resnet50-0676ba61.pth
 # Activate environment
 source .venv/bin/activate
 
-# Run from paper directory
-cd papers/attention_is_all_you_need
-python train.py --config config.yaml
+# Run from project directory
+cd projects/custom_transformer
+python train.py --config configs/tinystories.yaml
 
 # Or run from root with module syntax
 cd ~/research
-python -m papers.attention_is_all_you_need.train --config papers/attention_is_all_you_need/config.yaml
+python -m projects.custom_transformer.train --config projects/custom_transformer/configs/tinystories.yaml
 ```
 
 ### Using Docker (Per-Project)
 
-Each paper/project can have its own Docker setup:
+Each project can have its own Docker setup:
 
 ```dockerfile
-# papers/my_paper/docker/Dockerfile
+# projects/my_project/docker/Dockerfile
 FROM pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime
 
 WORKDIR /research
 COPY . .
 
 RUN pip install -e .
-CMD ["python", "papers/my_paper/train.py"]
+CMD ["python", "projects/my_project/train.py"]
 ```
 
 ```yaml
-# papers/my_paper/docker/docker-compose.yml
+# projects/my_project/docker/docker-compose.yml
 version: '3.8'
 services:
   training:
     build:
       context: ../..
-      dockerfile: papers/my_paper/docker/Dockerfile
+      dockerfile: projects/my_project/docker/Dockerfile
     volumes:
       - ../../assets:/research/assets
       - ../../common:/research/common
@@ -289,14 +261,6 @@ services:
 3. **Create project**: Set up in `projects/my_idea/`
 4. **Run experiments**: Use `common/` utilities for training/eval
 5. **Analyze results**: Use `common/visualization` for plots
-
-### Reproducing a Paper
-
-1. **Create paper directory**: `papers/paper_name/`
-2. **Implement using common**: Reuse models/training from `common/`
-3. **Download assets**: Store in `assets/`, symlink to paper
-4. **Run experiments**: Train and evaluate
-5. **Document results**: Update paper's README with findings
 
 ## Best Practices
 
