@@ -503,3 +503,57 @@ Input:disabled {
     color: #555c65;
     background: #141a26;
 }
+
+/* ============================================
+   STEP WIZARD STYLES
+   ============================================ */
+
+/* Step indicator at the top */
+.step-indicator {
+    color: #555c65;
+    margin-bottom: 1;
+    text-align: center;
+}
+
+/* Step field containers */
+.step-field {
+    padding: 1 0;
+    border-left: solid transparent;
+    padding-left: 1;
+    margin-bottom: 1;
+}
+
+/* Pending steps - dimmed */
+.step-field.pending {
+    opacity: 0.5;
+}
+
+/* Current step - highlighted */
+.step-field.current {
+    opacity: 1.0;
+    border-left: solid #78DCE8;
+}
+
+.step-field.current Static {
+    color: #78DCE8;
+}
+
+/* Completed steps - normal opacity with checkmark indicator */
+.step-field.completed {
+    opacity: 1.0;
+    border-left: solid #B2D977;
+}
+
+/* Step label styling */
+.step-label {
+    margin-bottom: 0;
+}
+
+.step-field.current .step-label {
+    color: #78DCE8;
+    text-style: bold;
+}
+
+.step-field.completed .step-label {
+    color: #B2D977;
+}

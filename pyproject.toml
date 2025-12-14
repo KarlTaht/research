@@ -40,6 +40,7 @@ dependencies = [
     # CLI & TUI
     "textual>=0.40.0",
     "tldextract>=5.0.0",
+    "prompt-toolkit>=3.0.0",
 ]
 
 [project.scripts]
@@ -47,6 +48,7 @@ research = "common.cli.tui:main"
 research-data = "common.cli.data:main"
 research-exp = "common.cli.experiments:main"
 research-infra = "common.cli.infra:main"
+token-tui = "common.simple_tui:main"
 
 [project.optional-dependencies]
 dev = [

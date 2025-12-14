@@ -12,6 +12,7 @@ from textual.widgets import Input, OptionList, RadioButton, RadioSet, Static
 from textual.widgets.option_list import Option
 
 from common.data import discover_local_datasets
+from .autocomplete_base import AutocompleteMixin
 from .fuzzy import fuzzy_filter
 
 
@@ -22,7 +23,7 @@ class SourceType(Enum):
     UNKNOWN = "unknown"
 
 
-class DataSourceInput(Vertical):
+class DataSourceInput(AutocompleteMixin, Vertical):
     """Smart data source input with auto-detection of source type.
 
     Features:
@@ -30,6 +31,7 @@ class DataSourceInput(Vertical):
     - Shows a toggle for source type (grayed out when only one option)
     - Displays detected type badge next to input
     - Pre-selects source type based on input pattern
+    - Uses AutocompleteMixin for reliable dropdown behavior
     """
 
     DEFAULT_CSS = """
@@ -142,6 +144,7 @@ class DataSourceInput(Vertical):
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self._init_autocomplete()  # Initialize mixin state
         self.label = label
         self.placeholder = placeholder
         self.hint = hint
@@ -150,7 +153,6 @@ class DataSourceInput(Vertical):
         self.supported_sources = supported_sources or [SourceType.DATASET, SourceType.FILE]
         self._all_datasets: list[str] = []
         self._updating = False
-        self._selecting = False  # Prevent recursion when selecting
 
     def compose(self) -> ComposeResult:
         label_text = self.label
@@ -194,10 +196,18 @@ class DataSourceInput(Vertical):
         self._all_datasets = discover_local_datasets()
         self._update_options("")
 
+    def _get_input_widget(self) -> Input:
+        """Return the Input widget for the mixin."""
+        return self.query_one(f"#{self.input_id}", Input)
+
+    def _get_option_list(self) -> OptionList:
+        """Return the OptionList widget for the mixin."""
+        return self.query_one("#source-options", OptionList)
+
     def _update_options(self, filter_text: str, show_all: bool = False) -> None:
         """Update the options list based on filter text (fuzzy search)."""
         try:
-            option_list = self.query_one("#source-options", OptionList)
+            option_list = self._get_option_list()
             option_list.clear_options()
 
             if filter_text:
@@ -213,9 +223,9 @@ class DataSourceInput(Vertical):
             if matching:
                 for ds in matching:
                     option_list.add_option(Option(ds, id=ds))
-                option_list.add_class("visible")
+                self._show_dropdown()
             else:
-                option_list.remove_class("visible")
+                self._hide_dropdown()
         except Exception:
             pass
 
@@ -226,33 +236,31 @@ class DataSourceInput(Vertical):
 
     def _select_source(self, source_id: str) -> None:
         """Select a source and update the input."""
-        self._selecting = True
-        try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
-            input_widget.value = source_id
-            self.value = source_id
 
-            option_list = self.query_one("#source-options", OptionList)
-            option_list.remove_class("visible")
-            option_list.highlighted = None  # Reset cursor
+        def on_selected(value: str) -> None:
+            """Callback after selection is complete."""
+            self.value = value
 
             # Detect source type
-            detected = self._detect_source_type(source_id)
+            detected = self._detect_source_type(value)
             if detected != SourceType.UNKNOWN:
                 self.source_type = detected
                 self._update_badge(detected)
                 self._update_radio_selection(detected)
 
-            self.post_message(self.Changed(self, source_id, self.source_type))
-        except Exception:
-            pass
-        finally:
-            self._selecting = False
+            self.post_message(self.Changed(self, value, self.source_type))
+
+        # Use mixin's selection handling for reliable dropdown behavior
+        self._select_value(source_id, on_selected)
 
     def on_focus(self, event: Focus) -> None:
         """When widget or its children get focus, show options."""
+        # Don't show dropdown if we just selected (cooldown period)
+        if not self._should_show_on_focus():
+            return
+
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
+            input_widget = self._get_input_widget()
             # Focus input if widget itself is focused
             if event.widget == self:
                 input_widget.focus()
@@ -264,8 +272,12 @@ class DataSourceInput(Vertical):
 
     def on_click(self, event: Click) -> None:
         """Handle clicks on the widget to show options."""
+        # Don't show dropdown if we just selected (cooldown period)
+        if not self._should_show_on_focus():
+            return
+
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
+            input_widget = self._get_input_widget()
             # Focus the input
             input_widget.focus()
             # Always show options on click
@@ -279,24 +291,8 @@ class DataSourceInput(Vertical):
 
     def on_blur(self) -> None:
         """Hide options when focus leaves the widget."""
-        # Delay hiding to allow click on options
-        self.set_timer(0.2, self._maybe_hide_options)
-
-    def _maybe_hide_options(self) -> None:
-        """Hide options if neither input nor option list has focus."""
-        # Don't hide if we're in the middle of selecting
-        if self._selecting:
-            return
-        try:
-            input_focused = self.query_one(f"#{self.input_id}", Input).has_focus
-            options = self.query_one("#source-options", OptionList)
-            options_focused = options.has_focus
-
-            if not input_focused and not options_focused:
-                options.remove_class("visible")
-                options.highlighted = None  # Reset cursor
-        except Exception:
-            pass
+        # Use mixin's delayed hide with cooldown check
+        self._maybe_hide_after_blur(200)
 
     def _detect_source_type(self, value: str) -> SourceType:
         """Detect the source type from the input value."""
@@ -409,8 +405,7 @@ class DataSourceInput(Vertical):
         """Set an error message."""
         self.error = message
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
-            input_widget.add_class("-invalid")
+            self._get_input_widget().add_class("-invalid")
         except Exception:
             pass
 
@@ -418,43 +413,35 @@ class DataSourceInput(Vertical):
         """Clear the error message."""
         self.error = ""
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
-            input_widget.remove_class("-invalid")
+            self._get_input_widget().remove_class("-invalid")
         except Exception:
             pass
 
     def get_value(self) -> str:
         """Get the current input value."""
         try:
-            return self.query_one(f"#{self.input_id}", Input).value
+            return self._get_input_widget().value
         except Exception:
             return self.value
 
     def set_value(self, value: str) -> None:
         """Set the input value programmatically without showing options."""
-        self._selecting = True
-        try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
-            input_widget.value = value
-            self.value = value
 
-            # Hide any visible options
-            option_list = self.query_one("#source-options", OptionList)
-            option_list.remove_class("visible")
-            option_list.highlighted = None  # Reset cursor
+        def on_set(val: str) -> None:
+            """Callback after value is set."""
+            self.value = val
 
             # Detect and update source type
-            detected = self._detect_source_type(value)
+            detected = self._detect_source_type(val)
             if detected != SourceType.UNKNOWN:
                 self.source_type = detected
                 self._update_badge(detected)
                 self._update_radio_selection(detected)
 
-            self.post_message(self.Changed(self, value, self.source_type))
-        except Exception:
-            pass
-        finally:
-            self._selecting = False
+            self.post_message(self.Changed(self, val, self.source_type))
+
+        # Use mixin's selection handling
+        self._select_value(value, on_set)
 
     def get_source_type(self) -> SourceType:
         """Get the current source type."""

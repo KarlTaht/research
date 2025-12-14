@@ -1,6 +1,7 @@
 """TUI screen modules."""
 
 from .wizard_base import WizardScreen
+from .step_wizard_base import StepWizardScreen
 from .output import OutputScreen
 from .home import HomeScreen
 from .category import CategoryScreen
@@ -16,6 +17,7 @@ from .train_tokenizer import TrainTokenizerScreen
 
 __all__ = [
     "WizardScreen",
+    "StepWizardScreen",
     "OutputScreen",
     "HomeScreen",
     "CategoryScreen",

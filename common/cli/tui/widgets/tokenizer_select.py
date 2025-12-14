@@ -11,6 +11,7 @@ from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from common.data import get_default_assets_dir
+from .autocomplete_base import AutocompleteMixin
 from .fuzzy import fuzzy_filter
 
 
@@ -56,10 +57,11 @@ def discover_local_tokenizers(assets_dir: Path | None = None) -> list[str]:
     return sorted(tokenizers)
 
 
-class TokenizerSelect(Vertical):
+class TokenizerSelect(AutocompleteMixin, Vertical):
     """An autocomplete widget for selecting tokenizers.
 
     Shows common tokenizers and discovers custom trained tokenizers.
+    Uses AutocompleteMixin for reliable dropdown behavior.
     """
 
     DEFAULT_CSS = """
@@ -129,13 +131,13 @@ class TokenizerSelect(Vertical):
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self._init_autocomplete()  # Initialize mixin state
         self.label = label
         self.placeholder = placeholder
         self.hint = hint
         self.required = required
         self.input_id = input_id or f"tokenizer-input-{id(self)}"
         self._all_tokenizers: list[str] = []
-        self._selecting = False
 
     def compose(self) -> ComposeResult:
         label_text = self.label
@@ -151,6 +153,14 @@ class TokenizerSelect(Vertical):
     def on_mount(self) -> None:
         """Load available tokenizers on mount."""
         self._refresh_tokenizers()
+
+    def _get_input_widget(self) -> Input:
+        """Return the Input widget for the mixin."""
+        return self.query_one(f"#{self.input_id}", Input)
+
+    def _get_option_list(self) -> OptionList:
+        """Return the OptionList widget for the mixin."""
+        return self.query_one("#tokenizer-options", OptionList)
 
     def _refresh_tokenizers(self) -> None:
         """Refresh the list of available tokenizers."""
@@ -168,7 +178,7 @@ class TokenizerSelect(Vertical):
     def _update_options(self, filter_text: str, show_all: bool = False) -> None:
         """Update the options list based on filter text (fuzzy search)."""
         try:
-            option_list = self.query_one("#tokenizer-options", OptionList)
+            option_list = self._get_option_list()
             option_list.clear_options()
 
             if filter_text:
@@ -187,9 +197,9 @@ class TokenizerSelect(Vertical):
                     else:
                         label = t
                     option_list.add_option(Option(label, id=t))
-                option_list.add_class("visible")
+                self._show_dropdown()
             else:
-                option_list.remove_class("visible")
+                self._hide_dropdown()
         except Exception:
             pass
 
@@ -205,13 +215,12 @@ class TokenizerSelect(Vertical):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle Enter key."""
         try:
-            option_list = self.query_one("#tokenizer-options", OptionList)
+            option_list = self._get_option_list()
             if option_list.option_count > 0:
                 first_option = option_list.get_option_at_index(0)
                 self._select_tokenizer(first_option.id)
             else:
-                option_list.remove_class("visible")
-                option_list.highlighted = None  # Reset cursor
+                self._hide_dropdown()
                 self.post_message(self.Selected(self, self.value))
         except Exception:
             pass
@@ -223,27 +232,24 @@ class TokenizerSelect(Vertical):
 
     def _select_tokenizer(self, tokenizer_id: str) -> None:
         """Select a tokenizer and update the input."""
-        self._selecting = True
-        try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
-            input_widget.value = tokenizer_id
-            self.value = tokenizer_id
 
-            option_list = self.query_one("#tokenizer-options", OptionList)
-            option_list.remove_class("visible")
-            option_list.highlighted = None  # Reset cursor
+        def on_selected(value: str) -> None:
+            """Callback after selection is complete."""
+            self.value = value
+            self.post_message(self.Selected(self, value))
+            self.post_message(self.Changed(self, value))
 
-            self.post_message(self.Selected(self, tokenizer_id))
-            self.post_message(self.Changed(self, tokenizer_id))
-        except Exception:
-            pass
-        finally:
-            self._selecting = False
+        # Use mixin's selection handling for reliable dropdown behavior
+        self._select_value(tokenizer_id, on_selected)
 
     def on_focus(self, event: Focus) -> None:
         """When widget gets focus, show options."""
+        # Don't show dropdown if we just selected (cooldown period)
+        if not self._should_show_on_focus():
+            return
+
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
+            input_widget = self._get_input_widget()
             if event.widget == self:
                 input_widget.focus()
             if not input_widget.value.strip():
@@ -253,8 +259,12 @@ class TokenizerSelect(Vertical):
 
     def on_click(self, event: Click) -> None:
         """Handle clicks on the widget to show options."""
+        # Don't show dropdown if we just selected (cooldown period)
+        if not self._should_show_on_focus():
+            return
+
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
+            input_widget = self._get_input_widget()
             input_widget.focus()
             # Always show options on click
             current_value = input_widget.value.strip()
@@ -267,23 +277,8 @@ class TokenizerSelect(Vertical):
 
     def on_blur(self) -> None:
         """Hide options when focus leaves the widget."""
-        self.set_timer(0.2, self._maybe_hide_options)
-
-    def _maybe_hide_options(self) -> None:
-        """Hide options if neither input nor option list has focus."""
-        # Don't hide if we're in the middle of selecting
-        if self._selecting:
-            return
-        try:
-            input_focused = self.query_one(f"#{self.input_id}", Input).has_focus
-            options = self.query_one("#tokenizer-options", OptionList)
-            options_focused = options.has_focus
-
-            if not input_focused and not options_focused:
-                options.remove_class("visible")
-                options.highlighted = None  # Reset cursor
-        except Exception:
-            pass
+        # Use mixin's delayed hide with cooldown check
+        self._maybe_hide_after_blur(200)
 
     def watch_error(self, error: str) -> None:
         """Update error message display."""
@@ -297,8 +292,7 @@ class TokenizerSelect(Vertical):
         """Set an error message."""
         self.error = message
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
-            input_widget.add_class("-invalid")
+            self._get_input_widget().add_class("-invalid")
         except Exception:
             pass
 
@@ -306,14 +300,13 @@ class TokenizerSelect(Vertical):
         """Clear the error message."""
         self.error = ""
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
-            input_widget.remove_class("-invalid")
+            self._get_input_widget().remove_class("-invalid")
         except Exception:
             pass
 
     def get_value(self) -> str:
         """Get the current input value."""
         try:
-            return self.query_one(f"#{self.input_id}", Input).value
+            return self._get_input_widget().value
         except Exception:
             return self.value

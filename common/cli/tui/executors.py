@@ -183,9 +183,20 @@ def execute_pretokenize(
     val_jsonl: Optional[str] = None,
     tokenizer: str = "gpt2",
     max_length: int = 1024,
+    max_tokens: Optional[int] = None,
     batch_size: int = 32,
 ) -> None:
-    """Pre-tokenize a dataset for faster training startup."""
+    """Pre-tokenize a dataset for faster training startup.
+
+    Args:
+        dataset: Registry dataset name (e.g., 'tinystories')
+        jsonl: Path to JSONL file with {"text": ...} format
+        val_jsonl: Optional validation JSONL file
+        tokenizer: Tokenizer name or path
+        max_length: Maximum sequence length
+        max_tokens: Optional limit on total tokens to process (e.g., 10_000_000)
+        batch_size: Batch size for tokenization
+    """
     from transformers import GPT2TokenizerFast, PreTrainedTokenizerFast
     from common.data import get_models_dir
     from common.data.dataset_registry import (
@@ -194,6 +205,23 @@ def execute_pretokenize(
         get_tokenizer_cache_key,
         create_lm_dataloader,
     )
+
+    def estimate_tokens(texts: list[str], avg_chars_per_token: float = 4.0) -> int:
+        """Estimate total tokens from text list."""
+        total_chars = sum(len(t) for t in texts)
+        return int(total_chars / avg_chars_per_token)
+
+    def sample_to_token_limit(texts: list[str], max_tok: int, avg_chars_per_token: float = 4.0) -> list[str]:
+        """Sample texts to stay within token limit."""
+        estimated = estimate_tokens(texts, avg_chars_per_token)
+        if estimated <= max_tok:
+            return texts
+
+        # Calculate sampling ratio
+        ratio = max_tok / estimated
+        sample_size = max(1, int(len(texts) * ratio))
+        print(f"  Sampling {sample_size:,} of {len(texts):,} texts to stay within {max_tok:,} token limit")
+        return texts[:sample_size]
 
     # Load tokenizer
     if tokenizer == 'gpt2':
@@ -224,6 +252,8 @@ def execute_pretokenize(
         print(f"Pre-tokenizing JSONL: {jsonl_path}")
         print(f"Tokenizer: {tokenizer}")
         print(f"Max length: {max_length}")
+        if max_tokens:
+            print(f"Max tokens: {max_tokens:,}")
         print(f"{'='*60}\n")
 
         # Load texts from JSONL
@@ -233,6 +263,10 @@ def execute_pretokenize(
             for line in f:
                 texts.append(json.loads(line)["text"])
         print(f"  Loaded {len(texts):,} texts")
+
+        # Apply token limit if specified
+        if max_tokens:
+            texts = sample_to_token_limit(texts, max_tokens)
 
         train_dataset = Dataset.from_dict({"text": texts})
         cache_key = get_tokenizer_cache_key(tok, max_length)
@@ -277,6 +311,8 @@ def execute_pretokenize(
         print(f"Pre-tokenizing dataset: {dataset}")
         print(f"Tokenizer: {tokenizer}")
         print(f"Max length: {max_length}")
+        if max_tokens:
+            print(f"Max tokens: {max_tokens:,}")
         print(f"{'='*60}\n")
 
         print(f"\nLoading dataset: {dataset}")
@@ -284,6 +320,20 @@ def execute_pretokenize(
         print(f"  Train examples: {len(train_dataset):,}")
         if val_dataset:
             print(f"  Val examples: {len(val_dataset):,}")
+
+        # Apply token limit if specified
+        if max_tokens:
+            train_texts = train_dataset[text_column]
+            train_texts = sample_to_token_limit(train_texts, max_tokens)
+            train_dataset = Dataset.from_dict({text_column: train_texts})
+            print(f"  Train examples after sampling: {len(train_dataset):,}")
+
+            if val_dataset:
+                # Sample validation proportionally (10% of train sample size)
+                val_sample_size = max(1, len(train_texts) // 10)
+                val_texts = val_dataset[text_column][:val_sample_size]
+                val_dataset = Dataset.from_dict({text_column: val_texts})
+                print(f"  Val examples after sampling: {len(val_dataset):,}")
 
         cache_path = get_tokenized_cache_path(dataset_path, tok, max_length)
         print(f"\nCache will be saved to: {cache_path}")

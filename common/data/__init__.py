@@ -1,6 +1,6 @@
 """Data utilities for datasets, data loading, and preprocessing."""
 
-from .hf_utils import (
+from .download_hf_dataset import (
     download_dataset,
     download_model,
     get_default_assets_dir,
@@ -24,10 +24,12 @@ from .token_analyzer import (
     TokenizerRecommendation,
     EdgeCaseStats,
     CoveragePoint,
-    train_custom_tokenizer,
-    train_custom_tokenizer_from_file,
     analyze_and_recommend,
 )
+
+from .train_tokenizer import train_custom_tokenizer_from_file
+
+from .pretokenize_dataset import train_custom_tokenizer
 
 __all__ = [
     # HuggingFace utilities

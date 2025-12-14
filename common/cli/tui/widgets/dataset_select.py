@@ -9,11 +9,15 @@ from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from common.data import discover_local_datasets
+from .autocomplete_base import AutocompleteMixin
 from .fuzzy import fuzzy_filter
 
 
-class DatasetSelect(Vertical):
-    """An autocomplete widget for selecting datasets from local storage or entering custom paths."""
+class DatasetSelect(AutocompleteMixin, Vertical):
+    """An autocomplete widget for selecting datasets from local storage or entering custom paths.
+
+    Uses AutocompleteMixin for reliable dropdown behavior.
+    """
 
     DEFAULT_CSS = """
     DatasetSelect {
@@ -83,6 +87,7 @@ class DatasetSelect(Vertical):
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self._init_autocomplete()  # Initialize mixin state
         self.label = label
         self.placeholder = placeholder
         self.hint = hint
@@ -90,7 +95,6 @@ class DatasetSelect(Vertical):
         self.input_id = input_id or f"dataset-input-{id(self)}"
         self.allow_custom = allow_custom
         self._all_datasets: list[str] = []
-        self._selecting = False  # Prevent recursion when selecting
 
     def compose(self) -> ComposeResult:
         label_text = self.label
@@ -107,6 +111,14 @@ class DatasetSelect(Vertical):
         """Load available datasets on mount."""
         self._refresh_datasets()
 
+    def _get_input_widget(self) -> Input:
+        """Return the Input widget for the mixin."""
+        return self.query_one(f"#{self.input_id}", Input)
+
+    def _get_option_list(self) -> OptionList:
+        """Return the OptionList widget for the mixin."""
+        return self.query_one("#dataset-options", OptionList)
+
     def _refresh_datasets(self) -> None:
         """Refresh the list of available datasets."""
         self._all_datasets = discover_local_datasets()
@@ -120,7 +132,7 @@ class DatasetSelect(Vertical):
             show_all: If True, show all datasets when filter is empty
         """
         try:
-            option_list = self.query_one("#dataset-options", OptionList)
+            option_list = self._get_option_list()
             option_list.clear_options()
 
             if filter_text:
@@ -136,9 +148,9 @@ class DatasetSelect(Vertical):
             if matching:
                 for ds in matching:
                     option_list.add_option(Option(ds, id=ds))
-                option_list.add_class("visible")
+                self._show_dropdown()
             else:
-                option_list.remove_class("visible")
+                self._hide_dropdown()
         except Exception:
             pass
 
@@ -154,15 +166,14 @@ class DatasetSelect(Vertical):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle Enter key - select first matching option or use current value."""
         try:
-            option_list = self.query_one("#dataset-options", OptionList)
+            option_list = self._get_option_list()
             if option_list.option_count > 0:
                 # Select the first option
                 first_option = option_list.get_option_at_index(0)
                 self._select_dataset(first_option.id)
             else:
                 # Use current value as-is (custom dataset)
-                option_list.remove_class("visible")
-                option_list.highlighted = None  # Reset cursor
+                self._hide_dropdown()
                 self.post_message(self.Selected(self, self.value))
         except Exception:
             pass
@@ -174,27 +185,24 @@ class DatasetSelect(Vertical):
 
     def _select_dataset(self, dataset_id: str) -> None:
         """Select a dataset and update the input."""
-        self._selecting = True
-        try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
-            input_widget.value = dataset_id
-            self.value = dataset_id
 
-            option_list = self.query_one("#dataset-options", OptionList)
-            option_list.remove_class("visible")
-            option_list.highlighted = None  # Reset cursor
+        def on_selected(value: str) -> None:
+            """Callback after selection is complete."""
+            self.value = value
+            self.post_message(self.Selected(self, value))
+            self.post_message(self.Changed(self, value))
 
-            self.post_message(self.Selected(self, dataset_id))
-            self.post_message(self.Changed(self, dataset_id))
-        except Exception:
-            pass
-        finally:
-            self._selecting = False
+        # Use mixin's selection handling for reliable dropdown behavior
+        self._select_value(dataset_id, on_selected)
 
     def on_focus(self, event: Focus) -> None:
         """When widget or its children get focus, show options."""
+        # Don't show dropdown if we just selected (cooldown period)
+        if not self._should_show_on_focus():
+            return
+
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
+            input_widget = self._get_input_widget()
             # Focus input if widget itself is focused
             if event.widget == self:
                 input_widget.focus()
@@ -206,8 +214,12 @@ class DatasetSelect(Vertical):
 
     def on_click(self, event: Click) -> None:
         """Handle clicks on the widget to show options."""
+        # Don't show dropdown if we just selected (cooldown period)
+        if not self._should_show_on_focus():
+            return
+
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
+            input_widget = self._get_input_widget()
             # Focus the input
             input_widget.focus()
             # Always show options on click
@@ -221,24 +233,8 @@ class DatasetSelect(Vertical):
 
     def on_blur(self) -> None:
         """Hide options when focus leaves the widget."""
-        # Delay hiding to allow click on options
-        self.set_timer(0.2, self._maybe_hide_options)
-
-    def _maybe_hide_options(self) -> None:
-        """Hide options if neither input nor option list has focus."""
-        # Don't hide if we're in the middle of selecting
-        if self._selecting:
-            return
-        try:
-            input_focused = self.query_one(f"#{self.input_id}", Input).has_focus
-            options = self.query_one("#dataset-options", OptionList)
-            options_focused = options.has_focus
-
-            if not input_focused and not options_focused:
-                options.remove_class("visible")
-                options.highlighted = None  # Reset cursor
-        except Exception:
-            pass
+        # Use mixin's delayed hide with cooldown check
+        self._maybe_hide_after_blur(200)
 
     def watch_error(self, error: str) -> None:
         """Update error message display."""
@@ -252,8 +248,7 @@ class DatasetSelect(Vertical):
         """Set an error message."""
         self.error = message
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
-            input_widget.add_class("-invalid")
+            self._get_input_widget().add_class("-invalid")
         except Exception:
             pass
 
@@ -261,15 +256,14 @@ class DatasetSelect(Vertical):
         """Clear the error message."""
         self.error = ""
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
-            input_widget.remove_class("-invalid")
+            self._get_input_widget().remove_class("-invalid")
         except Exception:
             pass
 
     def get_value(self) -> str:
         """Get the current input value."""
         try:
-            return self.query_one(f"#{self.input_id}", Input).value
+            return self._get_input_widget().value
         except Exception:
             return self.value
 

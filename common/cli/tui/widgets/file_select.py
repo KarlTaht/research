@@ -10,6 +10,8 @@ from textual.reactive import reactive
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from .autocomplete_base import AutocompleteMixin
+
 
 def get_path_completions(
     partial_path: str,
@@ -82,10 +84,11 @@ def get_path_completions(
     return completions[:20]  # Limit results
 
 
-class FileSelect(Vertical):
+class FileSelect(AutocompleteMixin, Vertical):
     """An autocomplete widget for selecting file paths.
 
     Shows path completions as user types, with optional extension filtering.
+    Uses AutocompleteMixin for reliable dropdown behavior.
     """
 
     DEFAULT_CSS = """
@@ -157,6 +160,7 @@ class FileSelect(Vertical):
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self._init_autocomplete()  # Initialize mixin state
         self.label = label
         self.placeholder = placeholder
         self.hint = hint
@@ -164,7 +168,6 @@ class FileSelect(Vertical):
         self.extensions = extensions  # e.g., ['.jsonl', '.json']
         self.base_dir = base_dir
         self.input_id = input_id or f"file-input-{id(self)}"
-        self._selecting = False
 
     def compose(self) -> ComposeResult:
         label_text = self.label
@@ -177,10 +180,18 @@ class FileSelect(Vertical):
             yield Static(f"[dim]{self.hint}[/dim]", id="hint", classes="file-hint")
         yield Static("", id="error", classes="file-error")
 
+    def _get_input_widget(self) -> Input:
+        """Return the Input widget for the mixin."""
+        return self.query_one(f"#{self.input_id}", Input)
+
+    def _get_option_list(self) -> OptionList:
+        """Return the OptionList widget for the mixin."""
+        return self.query_one("#file-options", OptionList)
+
     def _update_options(self, path_text: str, show_all: bool = False) -> None:
         """Update the options list based on current path."""
         try:
-            option_list = self.query_one("#file-options", OptionList)
+            option_list = self._get_option_list()
             option_list.clear_options()
 
             if path_text or show_all:
@@ -193,17 +204,16 @@ class FileSelect(Vertical):
                 if completions:
                     for path in completions:
                         # Show shorter label for display
-                        display_path = path
                         if path.endswith("/"):
                             label = f"{Path(path.rstrip('/')).name}/ [dim](dir)[/dim]"
                         else:
                             label = Path(path).name
-                        option_list.add_option(Option(label, id=display_path))
-                    option_list.add_class("visible")
+                        option_list.add_option(Option(label, id=path))
+                    self._show_dropdown()
                 else:
-                    option_list.remove_class("visible")
+                    self._hide_dropdown()
             else:
-                option_list.remove_class("visible")
+                self._hide_dropdown()
         except Exception:
             pass
 
@@ -219,13 +229,12 @@ class FileSelect(Vertical):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle Enter key - select first option or use current value."""
         try:
-            option_list = self.query_one("#file-options", OptionList)
+            option_list = self._get_option_list()
             if option_list.option_count > 0:
                 first_option = option_list.get_option_at_index(0)
                 self._select_path(first_option.id)
             else:
-                option_list.remove_class("visible")
-                option_list.highlighted = None  # Reset cursor
+                self._hide_dropdown()
                 self.post_message(self.Selected(self, self.value))
         except Exception:
             pass
@@ -236,22 +245,28 @@ class FileSelect(Vertical):
         self._select_path(event.option_id)
 
     def _select_path(self, path: str) -> None:
-        """Select a path and update the input."""
+        """Select a path and update the input.
+
+        Note: For directories, we update the input and show contents
+        rather than closing the dropdown (different from other widgets).
+        """
         self._selecting = True
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
+            input_widget = self._get_input_widget()
             input_widget.value = path
             self.value = path
 
-            option_list = self.query_one("#file-options", OptionList)
+            option_list = self._get_option_list()
 
-            # If it's a directory, show contents
+            # If it's a directory, show contents (don't hide dropdown)
             if path.endswith("/"):
                 option_list.highlighted = None  # Reset cursor before repopulating
                 self._update_options(path)
+                # Don't trigger cooldown for directory navigation
             else:
-                option_list.remove_class("visible")
-                option_list.highlighted = None  # Reset cursor
+                # File selected - use mixin's selection handling
+                self._hide_dropdown()
+                input_widget.focus()
                 self.post_message(self.Selected(self, path))
                 self.post_message(self.Changed(self, path))
         except Exception:
@@ -261,8 +276,12 @@ class FileSelect(Vertical):
 
     def on_focus(self, event: Focus) -> None:
         """When widget gets focus, show options."""
+        # Don't show dropdown if we just selected (cooldown period)
+        if not self._should_show_on_focus():
+            return
+
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
+            input_widget = self._get_input_widget()
             if event.widget == self:
                 input_widget.focus()
             current_value = input_widget.value.strip()
@@ -275,8 +294,12 @@ class FileSelect(Vertical):
 
     def on_click(self, event: Click) -> None:
         """Handle clicks on the widget to show options."""
+        # Don't show dropdown if we just selected (cooldown period)
+        if not self._should_show_on_focus():
+            return
+
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
+            input_widget = self._get_input_widget()
             input_widget.focus()
             current_value = input_widget.value.strip()
             if not current_value:
@@ -288,23 +311,8 @@ class FileSelect(Vertical):
 
     def on_blur(self) -> None:
         """Hide options when focus leaves the widget."""
-        self.set_timer(0.2, self._maybe_hide_options)
-
-    def _maybe_hide_options(self) -> None:
-        """Hide options if neither input nor option list has focus."""
-        # Don't hide if we're in the middle of selecting
-        if self._selecting:
-            return
-        try:
-            input_focused = self.query_one(f"#{self.input_id}", Input).has_focus
-            options = self.query_one("#file-options", OptionList)
-            options_focused = options.has_focus
-
-            if not input_focused and not options_focused:
-                options.remove_class("visible")
-                options.highlighted = None  # Reset cursor
-        except Exception:
-            pass
+        # Use mixin's delayed hide with cooldown check
+        self._maybe_hide_after_blur(200)
 
     def watch_error(self, error: str) -> None:
         """Update error message display."""
@@ -318,8 +326,7 @@ class FileSelect(Vertical):
         """Set an error message."""
         self.error = message
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
-            input_widget.add_class("-invalid")
+            self._get_input_widget().add_class("-invalid")
         except Exception:
             pass
 
@@ -327,14 +334,13 @@ class FileSelect(Vertical):
         """Clear the error message."""
         self.error = ""
         try:
-            input_widget = self.query_one(f"#{self.input_id}", Input)
-            input_widget.remove_class("-invalid")
+            self._get_input_widget().remove_class("-invalid")
         except Exception:
             pass
 
     def get_value(self) -> str:
         """Get the current input value."""
         try:
-            return self.query_one(f"#{self.input_id}", Input).value
+            return self._get_input_widget().value
         except Exception:
             return self.value
