@@ -105,15 +105,15 @@ python train.py --config configs/automotive.yaml --resume checkpoints/latest.pt
 
 ### What was done
 
-1. **Built domain index** from FineWeb 100BT sample using `build_domain_index.py`
+1. **Built domain index** from FineWeb 100BT sample using `common/data/build_domain_index.py`
    - Created Parquet index with domain, token counts, file locations
    - Enables fast SQL queries to explore available content
 
-2. **Identified target domains** using `query_domain_index.py`
+2. **Identified target domains** using `common/data/query_domain_index.py`
    - Automotive: ~800M tokens available (cars, motors, vehicles)
    - Food: ~350M tokens available (recipes, cooking, food)
 
-3. **Extracted corpora** using `extract_corpus.py`
+3. **Extracted corpora** using `common/data/extract_corpus.py`
    - Sampled ~125M tokens per corpus (~500MB each)
    - Split into train (90%) and validation (10%)
    - Saved as JSONL with `{"text": "..."}` format
@@ -122,13 +122,13 @@ python train.py --config configs/automotive.yaml --resume checkpoints/latest.pt
 
 ```bash
 # Build index (one-time, ~30 min)
-python build_domain_index.py
+python common/data/build_domain_index.py
 
 # Explore domains
-python query_domain_index.py
+python common/data/query_domain_index.py
 
 # Extract both corpora
-python extract_corpus.py
+python common/data/extract_corpus.py
 ```
 
 ### 1.2 Generate QA pairs (TODO)

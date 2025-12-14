@@ -211,10 +211,8 @@ This section describes the full workflow for preparing domain-specific datasets 
 For large datasets, first create an index to enable fast domain filtering:
 
 ```bash
-cd projects/continual_learning
-
 # Build index from FineWeb (extracts domain, token counts, file locations)
-python build_domain_index.py
+python common/data/build_domain_index.py
 ```
 
 This creates a Parquet index at `assets/datasets/.../domain_index.parquet` with columns:
@@ -229,7 +227,7 @@ Use SQL queries to explore available domains and estimate corpus sizes:
 
 ```bash
 # Interactive exploration
-python query_domain_index.py
+python common/data/query_domain_index.py
 
 # Example queries:
 # - Find automotive domains: WHERE etld_plus_one LIKE '%auto%'
@@ -243,13 +241,13 @@ Once you've identified target domains, extract them to JSONL files:
 
 ```bash
 # Preview what will be extracted
-python extract_corpus.py --preview
+python common/data/extract_corpus.py --preview
 
 # Extract both corpora (default ~125M tokens each, ~500MB)
-python extract_corpus.py
+python common/data/extract_corpus.py
 
 # Extract specific corpus with custom size
-python extract_corpus.py --corpus automotive --target-tokens 50000000
+python common/data/extract_corpus.py --corpus automotive --target-tokens 50000000
 ```
 
 Output structure:
@@ -340,17 +338,15 @@ Cache location: `data/corpus_automotive/train_tokenized/combined_bpe_32768_v3276
 ### Complete Example: FineWeb → Training-Ready Data
 
 ```bash
-cd projects/continual_learning
-
 # 1. Build index (one-time, ~30 min for 100B token sample)
-python build_domain_index.py
+python common/data/build_domain_index.py
 
 # 2. Explore domains
-python query_domain_index.py
+python common/data/query_domain_index.py
 # → Identified: automotive (~800M tokens), food (~350M tokens)
 
 # 3. Extract corpora (~500MB each)
-python extract_corpus.py
+python common/data/extract_corpus.py
 
 # 4. Analyze and choose tokenizer size
 python tools/analyze_tokens.py \
