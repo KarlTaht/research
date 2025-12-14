@@ -158,12 +158,15 @@ ListView > ListItem:hover {
 }
 
 ListView > ListItem.-selected {
-    background: rgba(242, 192, 99, 0.2);
-    color: #F2C063;
+    background: #F2C063;
+    color: #0a1220;
+    text-style: bold;
 }
 
 ListView:focus > ListItem.-selected {
-    background: rgba(242, 192, 99, 0.25);
+    background: #78DCE8;
+    color: #0a1220;
+    text-style: bold;
 }
 
 /* ============================================
@@ -181,12 +184,15 @@ DataTable > .datatable--header {
 }
 
 DataTable > .datatable--cursor {
-    background: #1a2233;
+    background: #F2C063;
+    color: #0a1220;
+    text-style: bold;
 }
 
 DataTable:focus > .datatable--cursor {
-    background: rgba(242, 192, 99, 0.2);
-    color: #F2C063;
+    background: #78DCE8;
+    color: #0a1220;
+    text-style: bold;
 }
 
 /* ============================================
@@ -476,4 +482,24 @@ ModalScreen {
 
 .center {
     text-align: center;
+}
+
+/* ============================================
+   DISABLED STATES
+   ============================================ */
+
+.disabled {
+    opacity: 0.4;
+    color: #555c65;
+}
+
+Select:disabled {
+    border: tall #333;
+    color: #555c65;
+}
+
+Input:disabled {
+    border: tall #333;
+    color: #555c65;
+    background: #141a26;
 }

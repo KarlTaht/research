@@ -17,7 +17,8 @@ source .venv/bin/activate
 uv pip install -e ".[all]"
 
 # Test environment
-python tools/test_env.py
+research-infra env
+# or: python -m common.cli.infra env
 ```
 
 ### Development Commands
@@ -35,33 +36,41 @@ mypy common/
 pytest
 ```
 
-### HuggingFace Asset Management
-```bash
-# Download dataset to assets/datasets/
-python tools/download_hf_dataset.py --name squad
-python tools/download_hf_dataset.py --name wmt14 --split train --config de-en
+### CLI Commands
 
-# Download model to assets/models/
-python tools/download_hf_model.py --repo-id bert-base-uncased
-python tools/download_hf_model.py --repo-id gpt2 --filename pytorch_model.bin
+The research CLI provides unified access to all tools. Launch the TUI or use commands directly:
+
+```bash
+# Launch interactive TUI (Ctrl+P for command palette)
+research
+
+# Data operations
+research-data download dataset --name squad
+research-data download model --repo-id gpt2
+research-data analyze --dataset tinystories
+research-data pretokenize --dataset tinystories --tokenizer gpt2
+research-data fineweb sample --tokens 10000000
+research-data fineweb index --status
+research-data fineweb query --top-domains 50
+research-data fineweb extract --corpus automotive
+
+# Experiment tracking
+research-exp list
+research-exp summary
+research-exp best perplexity --minimize --top 5
+research-exp query "SELECT * FROM experiments WHERE perplexity < 20"
+research-exp compare exp_001 exp_002
+
+# Infrastructure
+research-infra env
+research-infra lambda
 ```
 
-### Experiment Results Storage
+Alternative: Use `python -m common.cli.<module>` directly:
 ```bash
-# Query experiment results with SQL
-python tools/query_experiments.py --sql "SELECT * FROM experiments WHERE perplexity < 20"
-
-# List all experiments
-python tools/query_experiments.py --list
-
-# Get summary of all experiments
-python tools/query_experiments.py --summary
-
-# Get top 5 best models by perplexity
-python tools/query_experiments.py --best perplexity --top 5
-
-# Compare specific experiments
-python tools/query_experiments.py --compare exp_001 exp_002
+python -m common.cli.data download dataset --name squad
+python -m common.cli.experiments list
+python -m common.cli.infra env
 ```
 
 ### Running Experiments
@@ -96,11 +105,16 @@ python -m projects.custom_transformer.train
   - Symlinks to `assets/datasets/` for data (e.g., `data -> ../../assets/datasets/squad`)
   - Contains `train.py`, `evaluate.py`, `config.yaml`
 
-- **`tools/`**: Standalone CLI utilities
-  - `download_hf_dataset.py`: CLI for downloading HF datasets
-  - `download_hf_model.py`: CLI for downloading HF models
-  - `query_experiments.py`: CLI for querying experiment results
+- **`common/cli/`**: Unified CLI with Textual TUI
+  - `data.py`: Data operations (download, analyze, pretokenize, fineweb)
+  - `experiments.py`: Experiment tracking (list, query, compare)
+  - `infra.py`: Infrastructure (env check, cloud availability)
+  - `tui/`: Textual-based interactive TUI
+  - `_internal/`: Individual command implementations
+
+- **`tools/`**: Thin wrapper scripts (for backwards compatibility)
   - `test_env.py`: Environment verification
+  - `lambda_availability.py`: Lambda Labs GPU availability
 
 - **`exploratory/`**: Jupyter notebooks and one-off experiments
 
@@ -124,12 +138,10 @@ from ..common.data import download_dataset
 
 Dual-use system for downloading datasets/models:
 
-1. **CLI scripts** (`tools/download_hf_*.py`): For manual downloads
+1. **CLI commands** (`research-data download`): For manual downloads
 2. **Programmatic API** (`common/data/hf_utils.py`): For use in training scripts
 
-Both use the same underlying functions:
-- CLI scripts call functions from `common/data/hf_utils.py`
-- Training scripts can import directly from `common.data`
+Both use the same underlying functions from `common.data`:
 
 ```python
 # In training scripts
@@ -153,7 +165,7 @@ Large files (datasets, models, outputs) are:
 
 ```bash
 # Download once
-python tools/download_hf_dataset.py --name wmt14
+research-data download dataset --name wmt14
 
 # Use in multiple projects via symlinks
 cd projects/custom_transformer
@@ -265,7 +277,7 @@ See `projects/custom_transformer/CLAUDE.md` for full documentation.
 3. Create `train.py` using `Evaluator` and `save_experiment()`
 4. Create `evaluate.py` for testing
 5. Create `config.yaml` for hyperparameters
-6. Download dataset: `python tools/download_hf_dataset.py --name dataset_name`
+6. Download dataset: `research-data download dataset --name dataset_name`
 7. Run training and track experiments
 
 See `projects/custom_transformer/` for a complete working example.

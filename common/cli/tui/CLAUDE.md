@@ -2,7 +2,16 @@
 
 ## Status: All Wizards Complete
 
-All 9 wizard screens are implemented and working. 19 tests passing.
+All 9 wizard screens are implemented and working. 28 tests passing.
+
+### Recent Updates (Dec 2024)
+- Added `DatasetSelect` widget with autocomplete for local datasets
+- Added `DataSourceInput` widget with auto-detection + autocomplete
+- Added `TokenizerSelect` widget with common tokenizers + custom discovery
+- Added `FileSelect` widget with path completion + extension filtering
+- Moved Train Tokenizer to Preprocess category
+- Added inverted selection colors for better visibility
+- Fixed click-to-show-options behavior
 
 ---
 
@@ -23,7 +32,7 @@ All 9 wizard screens are implemented and working. 19 tests passing.
 | LabeledInput widget | Done | `widgets/labeled_input.py` |
 | App refactored | Done | `app.py` |
 | Arrow key navigation | Done | `screens/home.py` |
-| Tests | Done | `tests/test_tui.py` (19 passing) |
+| Tests | Done | `tests/test_tui.py` (28 passing) |
 
 ## All Wizards Implemented
 
@@ -34,19 +43,19 @@ All 9 wizard screens are implemented and working. 19 tests passing.
 | Download Model | `screens/download_model.py` |
 | Download FineWeb | `screens/download_fineweb.py` |
 
-### Preprocess (3)
+### Preprocess (4)
 | Wizard | File |
 |--------|------|
 | Pretokenize | `screens/pretokenize.py` |
+| Train Tokenizer | `screens/train_tokenizer.py` |
 | FineWeb Index | `screens/fineweb_index.py` |
 | FineWeb Extract | `screens/fineweb_extract.py` |
 
-### Analyze (3)
+### Analyze (2)
 | Wizard | File |
 |--------|------|
 | Analyze Tokens | `screens/analyze_tokens.py` |
 | Query Domains | `screens/query_domains.py` |
-| Train Tokenizer | `screens/train_tokenizer.py` |
 
 ---
 
@@ -67,11 +76,15 @@ common/cli/tui/
 │   ├── category.py          # Sub-command selection
 │   ├── wizard_base.py       # Base class for all wizards
 │   ├── output.py            # Live command output with RichLog
-│   └── download_dataset.py  # First wizard implementation
+│   └── [wizard screens]     # One per operation
 └── widgets/
     ├── __init__.py          # Exports widgets
     ├── command_preview.py   # Shows generated command live
-    └── labeled_input.py     # Input with label + validation
+    ├── labeled_input.py     # Input with label + validation
+    ├── dataset_select.py    # Autocomplete for local datasets
+    ├── data_source_input.py # Smart source type selector
+    ├── tokenizer_select.py  # Autocomplete for tokenizers
+    └── file_select.py       # File path completion
 ```
 
 ---
@@ -218,6 +231,104 @@ class WizardScreen(Screen):
 - Shows success/error status on completion
 - Supports re-run
 
+## DatasetSelect Widget
+
+Autocomplete widget for selecting datasets from local storage (`widgets/dataset_select.py`).
+
+```python
+from ..widgets import DatasetSelect
+
+yield DatasetSelect(
+    label="Dataset name",
+    placeholder="Type to search local datasets...",
+    required=True,
+    input_id="dataset-name",
+)
+
+def on_dataset_select_changed(self, event: DatasetSelect.Changed) -> None:
+    dataset_name = event.value  # e.g., "roneneldan/TinyStories"
+```
+
+Features:
+- Discovers datasets from `assets/datasets/{org}/{name}/`
+- Fuzzy-match filtering as user types
+- Shows dropdown with matching datasets
+- Accepts arbitrary HuggingFace paths
+
+## DataSourceInput Widget
+
+Smart source type selector with auto-detection and autocomplete (`widgets/data_source_input.py`).
+
+```python
+from ..widgets import DataSourceInput, SourceType
+
+yield DataSourceInput(
+    label="Data source",
+    placeholder="Dataset name or JSONL path...",
+    required=True,
+    input_id="source",
+)
+
+def on_data_source_input_changed(self, event: DataSourceInput.Changed) -> None:
+    value = event.value
+    source_type = event.source_type  # SourceType.DATASET, FILE, or UNKNOWN
+```
+
+Features:
+- Auto-detects source type as user types
+- **Autocomplete dropdown** for local datasets (click to show all)
+- Shows type badge (`[Dataset]` or `[File]`)
+- Toggle grayed out when only one type applies
+- Supports both dataset names and file paths
+
+## TokenizerSelect Widget
+
+Autocomplete widget for selecting tokenizers (`widgets/tokenizer_select.py`).
+
+```python
+from ..widgets import TokenizerSelect
+
+yield TokenizerSelect(
+    label="Tokenizer",
+    placeholder="gpt2",
+    hint="HuggingFace tokenizer or custom trained",
+    input_id="tokenizer",
+)
+
+def on_tokenizer_select_changed(self, event: TokenizerSelect.Changed) -> None:
+    tokenizer = event.value  # e.g., "bert-base-uncased"
+```
+
+Features:
+- 14 common tokenizers (gpt2, bert variants, roberta, t5, llama, etc.)
+- Discovers custom trained tokenizers from `assets/models/tokenizers/`
+- Fuzzy-match filtering as user types
+- Shows all options when clicked with empty input
+
+## FileSelect Widget
+
+File path completion widget (`widgets/file_select.py`).
+
+```python
+from ..widgets import FileSelect
+
+yield FileSelect(
+    label="Validation JSONL",
+    placeholder="path/to/file.jsonl",
+    extensions=[".jsonl", ".json"],  # Filter by extension
+    input_id="val-jsonl",
+)
+
+def on_file_select_changed(self, event: FileSelect.Changed) -> None:
+    path = event.value  # e.g., "data/corpus/val.jsonl"
+```
+
+Features:
+- Path completion for directories and files
+- Extension filtering (e.g., only show `.jsonl` files)
+- Navigates into directories when selected
+- Shows current directory contents when clicked with empty input
+
 ---
 
 # Theme Colors (Monokai Pro)
@@ -240,7 +351,8 @@ PURPLE = "#ABA0F2"      # Headers
 pytest tests/test_tui.py -v
 ```
 
-Current: 19 tests passing
+Current: 28 tests passing
+- 9 widget tests: DatasetSelect (3), TokenizerSelect (3), FileSelect (3)
 
 Test pattern:
 ```python
@@ -262,8 +374,37 @@ async def test_something(self):
 
 ## Future Enhancements
 - More tests for wizard flows
-- Visual polish (focus indicators, hover states)
-- File browser for path inputs
-- Autocomplete for dataset/model names
 - Recent commands history
-- Keyboard shortcut help overlay
+- Model autocomplete for download_model.py
+- Corpus name autocomplete for fineweb_extract.py
+
+---
+
+## Future Direction: Beautification Roadmap
+
+The TUI has extensive design principles documented in `design_principles.md` that represent the target state. Key areas for future beautification work:
+
+### New Screens to Build
+- **Datasets Screen**: Browse/tokenize/analyze tabs with dataset table
+- **Experiments Screen**: Split-pane layout with experiment list + detail view
+- **Experiment Detail**: Metric progress bars, live logs, export functionality
+- **Tools/Environment Screen**: Status checklist, quick actions
+
+### Layout Patterns to Implement
+- Multi-pane split views (master list + detail panel)
+- Tabbed interfaces for multi-view screens
+- Modal dialogs for confirmations and details
+
+### New Widgets to Create
+- `widgets/sparkline.py`: Sparkline graphs for metrics (loss trends)
+- `widgets/status.py`: Status badges (checkmark/x/half/empty)
+- `widgets/progress.py`: Determinate/indeterminate progress indicators
+
+### Visual Polish
+- Consistent focus rings on all interactive elements
+- Contextual footer keybindings per screen
+- Search/filter functionality (`/` key)
+- Help overlay (`?` key)
+- Semantic color formatting (orange for numbers, cyan for keybindings)
+
+See `design_principles.md` for full specifications.

@@ -23,6 +23,7 @@ CATEGORIES = {
         "description": "Transform raw data for training",
         "commands": [
             ("tokenize", "Pre-tokenize dataset for training", "pretokenize"),
+            ("train-tokenizer", "Train custom BPE tokenizer", "train_tokenizer"),
             ("index", "Build FineWeb domain index", "fineweb_index"),
             ("extract", "Extract domain corpus from FineWeb", "fineweb_extract"),
         ],
@@ -33,7 +34,6 @@ CATEGORIES = {
         "commands": [
             ("tokens", "Analyze token distributions", "analyze_tokens"),
             ("domains", "Query FineWeb domain index", "query_domains"),
-            ("train-tokenizer", "Train custom BPE tokenizer", "train_tokenizer"),
         ],
     },
 }

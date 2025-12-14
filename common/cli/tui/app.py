@@ -138,6 +138,9 @@ class ResearchApp(App):
     # Load CSS from external file
     CSS_PATH = Path(__file__).parent / "styles.tcss"
 
+    # Define layers for dropdown overlays (higher index = renders on top)
+    LAYERS = ("below", "default", "above")
+
     BINDINGS = [
         Binding("ctrl+p", "command_palette", "Commands", show=True),
         Binding("q", "quit", "Quit", show=True),

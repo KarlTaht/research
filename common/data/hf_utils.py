@@ -157,3 +157,49 @@ def get_datasets_dir() -> Path:
 def get_models_dir() -> Path:
     """Get the default models directory."""
     return get_default_assets_dir() / "models"
+
+
+def discover_local_datasets(assets_dir: Optional[Path] = None) -> list[str]:
+    """
+    Scan assets/datasets/ subdirectories and return list of available datasets.
+
+    Returns dataset identifiers in the format 'org/dataset_name' matching the
+    HuggingFace Hub pattern. Excludes tokenized cache directories.
+
+    Args:
+        assets_dir: Assets directory path. If None, uses get_default_assets_dir().
+
+    Returns:
+        Sorted list of dataset identifiers (e.g., ['roneneldan/TinyStories', 'nampdn-ai/tiny-textbooks'])
+
+    Example:
+        >>> from common.data.hf_utils import discover_local_datasets
+        >>> datasets = discover_local_datasets()
+        >>> print(datasets)
+        ['nampdn-ai/tiny-codes', 'nampdn-ai/tiny-textbooks', 'roneneldan/TinyStories']
+    """
+    if assets_dir is None:
+        assets_dir = get_default_assets_dir()
+
+    datasets_dir = assets_dir / "datasets"
+    if not datasets_dir.exists():
+        return []
+
+    datasets = []
+    for org_dir in datasets_dir.iterdir():
+        # Skip hidden directories and files
+        if not org_dir.is_dir() or org_dir.name.startswith('.'):
+            continue
+
+        for ds_dir in org_dir.iterdir():
+            # Skip non-directories, hidden dirs, and tokenized cache dirs
+            if not ds_dir.is_dir():
+                continue
+            if ds_dir.name.startswith('.'):
+                continue
+            if ds_dir.name.endswith('_tokenized'):
+                continue
+
+            datasets.append(f"{org_dir.name}/{ds_dir.name}")
+
+    return sorted(datasets)

@@ -56,6 +56,7 @@ DOWNLOAD_COMMANDS = [
 
 PREPROCESS_COMMANDS = [
     ("tokenize", "Pre-tokenize dataset"),
+    ("train-tok", "Train tokenizer"),
     ("index", "Build FineWeb index"),
     ("extract", "Extract domain corpus"),
 ]
@@ -63,7 +64,6 @@ PREPROCESS_COMMANDS = [
 ANALYZE_COMMANDS = [
     ("tokens", "Token distribution"),
     ("domains", "Query domain index"),
-    ("train-tok", "Train tokenizer"),
 ]
 
 

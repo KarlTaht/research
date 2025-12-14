@@ -36,7 +36,17 @@ dependencies = [
     # Experiment storage
     "duckdb>=0.9.0",
     "pyarrow>=14.0.0",
+
+    # CLI & TUI
+    "textual>=0.40.0",
+    "tldextract>=5.0.0",
 ]
+
+[project.scripts]
+research = "common.cli.tui:main"
+research-data = "common.cli.data:main"
+research-exp = "common.cli.experiments:main"
+research-infra = "common.cli.infra:main"
 
 [project.optional-dependencies]
 dev = [

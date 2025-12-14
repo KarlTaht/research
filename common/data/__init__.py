@@ -6,6 +6,7 @@ from .hf_utils import (
     get_default_assets_dir,
     get_datasets_dir,
     get_models_dir,
+    discover_local_datasets,
 )
 
 from .dataset_registry import (
@@ -35,6 +36,7 @@ __all__ = [
     "get_default_assets_dir",
     "get_datasets_dir",
     "get_models_dir",
+    "discover_local_datasets",
     # Dataset registry
     "DATASET_REGISTRY",
     "get_dataset_config",
