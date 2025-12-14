@@ -202,6 +202,179 @@ cd ~/research/assets/models
 wget https://download.pytorch.org/models/resnet50-0676ba61.pth
 ```
 
+## Dataset Preparation
+
+This section describes the full workflow for preparing domain-specific datasets from large corpora like FineWeb. The example below creates automotive and food corpora for continual learning experiments.
+
+### 1. Build a Domain Index
+
+For large datasets, first create an index to enable fast domain filtering:
+
+```bash
+cd projects/continual_learning
+
+# Build index from FineWeb (extracts domain, token counts, file locations)
+python build_domain_index.py
+```
+
+This creates a Parquet index at `assets/datasets/.../domain_index.parquet` with columns:
+- `etld_plus_one`: Domain (e.g., "bmw.com", "allrecipes.com")
+- `token_count`: Number of tokens in document
+- `shard_file`: Source Arrow file
+- `row_idx`: Row index within shard
+
+### 2. Query the Index to Find Categories
+
+Use SQL queries to explore available domains and estimate corpus sizes:
+
+```bash
+# Interactive exploration
+python query_domain_index.py
+
+# Example queries:
+# - Find automotive domains: WHERE etld_plus_one LIKE '%auto%'
+# - Estimate size: SELECT SUM(token_count) FROM idx WHERE ...
+# - List top domains: SELECT etld_plus_one, COUNT(*) GROUP BY 1 ORDER BY 2 DESC
+```
+
+### 3. Extract Domain-Specific Corpora
+
+Once you've identified target domains, extract them to JSONL files:
+
+```bash
+# Preview what will be extracted
+python extract_corpus.py --preview
+
+# Extract both corpora (default ~125M tokens each, ~500MB)
+python extract_corpus.py
+
+# Extract specific corpus with custom size
+python extract_corpus.py --corpus automotive --target-tokens 50000000
+```
+
+Output structure:
+```
+data/
+├── corpus_automotive/
+│   ├── train.jsonl      # {"text": "..."}
+│   ├── val.jsonl
+│   └── metadata.json
+└── corpus_food/
+    ├── train.jsonl
+    ├── val.jsonl
+    └── metadata.json
+```
+
+### 4. Analyze Token Distributions
+
+Understand vocabulary usage to choose optimal tokenizer size:
+
+```bash
+# Analyze a single corpus
+python tools/analyze_tokens.py --jsonl data/corpus_automotive/train.jsonl
+
+# Compare multiple corpora
+python tools/analyze_tokens.py \
+  --jsonl data/corpus_automotive/train.jsonl data/corpus_food/train.jsonl \
+  --compare
+
+# Get tokenizer size recommendations
+python tools/analyze_tokens.py --jsonl data/corpus_automotive/train.jsonl --recommendations
+```
+
+Key metrics to look for:
+- **Coverage milestones**: Tokens needed for 90%/95%/99% coverage
+- **Vocabulary utilization**: What fraction of GPT-2's 50k tokens are actually used
+- **Edge cases**: Single chars, punctuation, numbers, rare tokens
+
+### 5. Train a Custom Tokenizer
+
+Train a BPE tokenizer optimized for your corpus:
+
+```bash
+# Train on single corpus
+python tools/analyze_tokens.py \
+  --jsonl data/corpus_automotive/train.jsonl \
+  --train-tokenizer 16384
+
+# Train on combined corpora (recommended for multi-domain experiments)
+python tools/analyze_tokens.py \
+  --jsonl data/corpus_automotive/train.jsonl data/corpus_food/train.jsonl \
+  --train-tokenizer 32768
+```
+
+Tokenizer saved to: `assets/models/tokenizers/combined_bpe_32768/`
+
+**Choosing vocab size:**
+- Use coverage analysis to find where diminishing returns start (~99% coverage)
+- Powers of 2 are optimal for GPU efficiency (4096, 8192, 16384, 32768)
+- Smaller vocab = faster training, larger embeddings proportion
+
+### 6. Pre-tokenize for Fast Training
+
+Cache tokenized data to eliminate startup overhead:
+
+```bash
+# Pre-tokenize with your custom tokenizer
+python tools/pretokenize_dataset.py \
+  --jsonl data/corpus_automotive/train.jsonl \
+  --val-jsonl data/corpus_automotive/val.jsonl \
+  --tokenizer combined_bpe_32768 \
+  --max-length 1024
+
+# Repeat for other corpora
+python tools/pretokenize_dataset.py \
+  --jsonl data/corpus_food/train.jsonl \
+  --val-jsonl data/corpus_food/val.jsonl \
+  --tokenizer combined_bpe_32768 \
+  --max-length 1024
+```
+
+Cache location: `data/corpus_automotive/train_tokenized/combined_bpe_32768_v32768_len1024/`
+
+**Benefits:**
+- First run: ~70s to tokenize 180k documents
+- Subsequent runs: ~1s to load from cache
+- Cache is tokenizer-specific (different tokenizer = different cache)
+
+### Complete Example: FineWeb → Training-Ready Data
+
+```bash
+cd projects/continual_learning
+
+# 1. Build index (one-time, ~30 min for 100B token sample)
+python build_domain_index.py
+
+# 2. Explore domains
+python query_domain_index.py
+# → Identified: automotive (~800M tokens), food (~350M tokens)
+
+# 3. Extract corpora (~500MB each)
+python extract_corpus.py
+
+# 4. Analyze and choose tokenizer size
+python tools/analyze_tokens.py \
+  --jsonl data/corpus_automotive/train.jsonl data/corpus_food/train.jsonl \
+  --compare --recommendations
+# → 99% coverage needs ~34k tokens, chose 32768
+
+# 5. Train combined tokenizer
+python tools/analyze_tokens.py \
+  --jsonl data/corpus_automotive/train.jsonl data/corpus_food/train.jsonl \
+  --train-tokenizer 32768
+
+# 6. Pre-tokenize both corpora
+for corpus in automotive food; do
+  python tools/pretokenize_dataset.py \
+    --jsonl data/corpus_${corpus}/train.jsonl \
+    --val-jsonl data/corpus_${corpus}/val.jsonl \
+    --tokenizer combined_bpe_32768 \
+    --max-length 1024
+done
+
+# Ready for training!
+```
+
 ### Running Experiments
 
 ```bash

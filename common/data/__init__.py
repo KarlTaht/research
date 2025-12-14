@@ -24,6 +24,7 @@ from .token_analyzer import (
     EdgeCaseStats,
     CoveragePoint,
     train_custom_tokenizer,
+    train_custom_tokenizer_from_file,
     analyze_and_recommend,
 )
 
@@ -48,5 +49,6 @@ __all__ = [
     "EdgeCaseStats",
     "CoveragePoint",
     "train_custom_tokenizer",
+    "train_custom_tokenizer_from_file",
     "analyze_and_recommend",
 ]

@@ -13,61 +13,181 @@ A hands-on experiment to build intuition for catastrophic forgetting in transfor
 
 ---
 
-## Phase 1: Data Preparation (Day 1)
+## Current Status
 
-### 1.1 Subset your FineWeb data
+### ✅ Completed
 
-You don't need 400GB. Pull out two distinct slices:
-- **Corpus A:** ~500MB of text (filter for a specific domain—science articles, history, etc.)
-- **Corpus B:** ~500MB of different domain (news, fiction, or different language for sharp distribution shift)
+| Phase | Status | Artifacts |
+|-------|--------|-----------|
+| **1. Data Preparation** | ✅ Complete | Two domain corpora extracted from FineWeb |
+| **2. Tokenizer** | ✅ Complete | Combined BPE tokenizer (32,768 vocab) |
+| **Pre-tokenization** | ✅ Complete | Cached tokenized datasets for instant loading |
+| **3. Model Architecture** | ✅ Skeleton | `TorchTransformer` class (needs transformer layers) |
+| **4. Training Infrastructure** | ✅ Complete | `train.py` + configs for both corpora |
 
-### 1.2 Generate QA pairs from Corpus A
+### 📦 Prepared Corpora
 
-This is your eval signal. For each document (or chunk), generate simple factual questions that can only be answered from that text.
+| Corpus | Description | Train Docs | Val Docs | ~Tokens |
+|--------|-------------|------------|----------|---------|
+| **Automotive** | Cars, motors, vehicles content | 179,897 | 19,988 | 111M |
+| **Food** | Recipes, cooking, food content | 199,280 | 22,142 | 112M |
 
-**Options:**
-- Use Claude API to generate QA pairs from chunks (expensive but high quality)
-- Use a smaller local model (Mistral 7B, Llama 8B) to generate them
-- Rule-based extraction: named entities, dates, numbers → cloze-style questions ("The treaty was signed in ___")
+**Data locations:**
+```
+data/
+├── corpus_automotive/
+│   ├── train.jsonl           # 505 MB
+│   ├── val.jsonl             # 58 MB
+│   └── metadata.json
+└── corpus_food/
+    ├── train.jsonl           # 491 MB
+    ├── val.jsonl             # 54 MB
+    └── metadata.json
+```
 
-**Target:** ~5-10k QA pairs spanning your Corpus A content.
+### 🔤 Tokenizer
 
-### 1.3 Format your data
+**Combined tokenizer trained on both corpora:**
+- **Location:** `assets/models/tokenizers/combined_bpe_32768/`
+- **Vocab size:** 32,768 (power of 2 for GPU efficiency)
+- **Coverage:** ~98% of both corpora
+
+```python
+from transformers import PreTrainedTokenizerFast
+tokenizer = PreTrainedTokenizerFast.from_pretrained(
+    'assets/models/tokenizers/combined_bpe_32768'
+)
+```
+
+### 💾 Pre-tokenized Caches
+
+Ready for instant training startup (~1s vs ~70s):
 
 ```
-training_data/
-  corpus_a/
-    train.jsonl      # {"text": "..."}
-    val.jsonl
-  corpus_b/
-    train.jsonl
-    val.jsonl
-  eval/
-    qa_pairs.jsonl   # {"context": "...", "question": "...", "answer": "..."}
+data/corpus_automotive/train_tokenized/combined_bpe_32768_v32768_len1024/
+data/corpus_food/train_tokenized/combined_bpe_32768_v32768_len1024/
+```
+
+### 🎯 Next Steps
+
+1. **Phase 3:** Complete transformer layers in `TorchTransformer` (attention, FFN)
+2. **Phase 5:** Evaluation harness (QA test generation with Claude Haiku)
+3. **Phase 6:** Run baseline experiments
+
+### 🏗️ Training Infrastructure
+
+**Model:** `models/torch_transformer.py`
+- Extends `BaseLanguageModel` from `common.models`
+- Config: 6 layers, 512 dim, 8 heads, 2048 FFN, 1024 context
+- ~34M parameters (with 32k vocab embeddings)
+
+**Training:** `train.py`
+- Loads pre-tokenized data from cache (~1s startup)
+- bfloat16 mixed precision
+- Cosine LR decay with warmup
+- Checkpoint saving/resumption
+
+**Usage:**
+```bash
+# Train on automotive corpus
+python train.py --config configs/automotive.yaml
+
+# Train on food corpus
+python train.py --config configs/food.yaml
+
+# Resume training
+python train.py --config configs/automotive.yaml --resume checkpoints/latest.pt
 ```
 
 ---
 
-## Phase 2: Tokenizer (Day 1-2)
+## Phase 1: Data Preparation (Day 1) ✅ COMPLETE
 
-### 2.1 Train a BPE tokenizer from scratch
+### What was done
 
-Use `tokenizers` library (HuggingFace). Train on a mix of both corpora so your vocab covers both distributions.
+1. **Built domain index** from FineWeb 100BT sample using `build_domain_index.py`
+   - Created Parquet index with domain, token counts, file locations
+   - Enables fast SQL queries to explore available content
 
-```python
-from tokenizers import Tokenizer, models, trainers, pre_tokenizers
+2. **Identified target domains** using `query_domain_index.py`
+   - Automotive: ~800M tokens available (cars, motors, vehicles)
+   - Food: ~350M tokens available (recipes, cooking, food)
 
-tokenizer = Tokenizer(models.BPE())
-tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel()
-trainer = trainers.BpeTrainer(
-    vocab_size=16384, 
-    special_tokens=["<pad>", "<eos>", "<bos>"]
-)
-tokenizer.train(files=["corpus_a.txt", "corpus_b.txt"], trainer=trainer)
-tokenizer.save("tokenizer.json")
+3. **Extracted corpora** using `extract_corpus.py`
+   - Sampled ~125M tokens per corpus (~500MB each)
+   - Split into train (90%) and validation (10%)
+   - Saved as JSONL with `{"text": "..."}` format
+
+### Commands used
+
+```bash
+# Build index (one-time, ~30 min)
+python build_domain_index.py
+
+# Explore domains
+python query_domain_index.py
+
+# Extract both corpora
+python extract_corpus.py
 ```
 
-16k vocab is fine for this scale. Smaller than GPT-2's 50k but sufficient.
+### 1.2 Generate QA pairs (TODO)
+
+**Target:** ~5-10k QA pairs spanning Corpus A (automotive) content.
+
+See Phase 5 for QA generation with Claude Haiku.
+
+---
+
+## Phase 2: Tokenizer (Day 1-2) ✅ COMPLETE
+
+### What was done
+
+1. **Analyzed token distributions** for both corpora
+   - Automotive: 99% coverage needs ~34k tokens
+   - Food: 99% coverage needs ~29k tokens
+
+2. **Trained combined BPE tokenizer** on both corpora
+   - Vocab size: 32,768 (power of 2 for GPU efficiency)
+   - Provides ~98% coverage on both domains
+
+3. **Pre-tokenized both corpora** for fast training startup
+   - Train tokenization: ~70s → cached
+   - Subsequent loads: ~1s
+
+### Commands used
+
+```bash
+# Analyze token distributions
+python tools/analyze_tokens.py \
+  --jsonl data/corpus_automotive/train.jsonl data/corpus_food/train.jsonl \
+  --compare --recommendations
+
+# Train combined tokenizer (32k vocab)
+python tools/analyze_tokens.py \
+  --jsonl data/corpus_automotive/train.jsonl data/corpus_food/train.jsonl \
+  --train-tokenizer 32768
+
+# Pre-tokenize both corpora
+for corpus in automotive food; do
+  python tools/pretokenize_dataset.py \
+    --jsonl data/corpus_${corpus}/train.jsonl \
+    --val-jsonl data/corpus_${corpus}/val.jsonl \
+    --tokenizer combined_bpe_32768 \
+    --max-length 1024
+done
+```
+
+### Loading the tokenizer
+
+```python
+from transformers import PreTrainedTokenizerFast
+
+tokenizer = PreTrainedTokenizerFast.from_pretrained(
+    'assets/models/tokenizers/combined_bpe_32768'
+)
+print(f"Vocab size: {len(tokenizer)}")  # 32768
+```
 
 ---
 
@@ -75,7 +195,7 @@ tokenizer.save("tokenizer.json")
 
 ### 3.1 Define a minimal transformer
 
-Target ~20M parameters:
+Target ~25-30M parameters:
 
 | Component | Dimension |
 |-----------|-----------|
@@ -83,10 +203,10 @@ Target ~20M parameters:
 | Embedding dim | 512 |
 | Heads | 8 |
 | FFN hidden | 2048 |
-| Context length | 512 |
-| Vocab size | 16384 |
+| Context length | 1024 |
+| Vocab size | 32768 |
 
-This gives you roughly 20-25M parameters. Adjust layers or embedding dim to hit your target.
+This gives you roughly 25-30M parameters (larger vocab = more embedding params). Adjust layers or embedding dim to hit your target.
 
 ### 3.2 Implementation checklist
 
