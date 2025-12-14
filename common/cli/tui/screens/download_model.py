@@ -3,7 +3,7 @@
 from textual.app import ComposeResult
 from textual.widgets import Input
 
-from ..widgets import CommandPreview, LabeledInput
+from ..widgets import LabeledInput
 from .wizard_base import WizardScreen
 
 
@@ -11,7 +11,7 @@ class DownloadModelScreen(WizardScreen):
     """Wizard for downloading HuggingFace models."""
 
     TITLE = "Download Model"
-    COMMAND_MODULE = "common.cli.data"
+    EXECUTOR_NAME = "download_model"
 
     def compose_form(self) -> ComposeResult:
         """Compose the form fields."""
@@ -44,62 +44,46 @@ class DownloadModelScreen(WizardScreen):
             input_id="output",
         )
 
-    def compose_command_preview(self) -> ComposeResult:
-        """Compose the command preview."""
-        yield CommandPreview(
-            module=self.COMMAND_MODULE,
-            initial_args=self.get_command_args(),
-            id="preview",
-        )
-
     def _get_execute_label(self) -> str:
         return "Download"
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Update command preview when inputs change."""
-        self._update_preview()
+        self.update_command_preview()
 
-    def _update_preview(self) -> None:
-        """Update the command preview widget."""
-        try:
-            preview = self.query_one("#preview", CommandPreview)
-            preview.update_args(self.get_command_args())
-        except Exception:
-            pass
-
-    def get_command_args(self) -> list[str]:
-        """Build CLI arguments from form state."""
-        args = ["download", "model"]
+    def get_params(self) -> dict:
+        """Build parameters for the executor."""
+        params = {}
 
         try:
             # Repo ID (required)
             repo_input = self.query_one("#repo-id", Input)
             repo = repo_input.value.strip()
             if repo:
-                args.extend(["--repo-id", repo])
+                params["repo_id"] = repo
 
             # Filename (optional)
             filename_input = self.query_one("#filename", Input)
             filename = filename_input.value.strip()
             if filename:
-                args.extend(["--filename", filename])
+                params["filename"] = filename
 
             # Revision (optional)
             revision_input = self.query_one("#revision", Input)
             revision = revision_input.value.strip()
             if revision:
-                args.extend(["--revision", revision])
+                params["revision"] = revision
 
             # Output directory (optional)
             output_input = self.query_one("#output", Input)
             output = output_input.value.strip()
             if output:
-                args.extend(["--output", output])
+                params["output"] = output
 
         except Exception:
             pass
 
-        return args
+        return params
 
     def validate(self) -> tuple[bool, str]:
         """Validate the form before execution."""

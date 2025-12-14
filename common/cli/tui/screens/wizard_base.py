@@ -11,14 +11,17 @@ class WizardScreen(Screen):
     """Base class for all wizard screens.
 
     Subclasses should:
-    1. Set TITLE and COMMAND_MODULE class attributes
+    1. Set TITLE and EXECUTOR_NAME class attributes
     2. Override compose_form() to add form fields
-    3. Override get_command_args() to return CLI arguments
+    3. Override get_params() to return parameters for the executor
     4. Optionally override validate() for form validation
     """
 
     TITLE: str = "Wizard"
-    COMMAND_MODULE: str = ""  # e.g., "common.cli.data"
+    EXECUTOR_NAME: str = ""  # e.g., "download_dataset"
+
+    # Define layers for dropdown overlays (higher index = renders on top)
+    LAYERS = ("below", "default", "above")
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
@@ -145,13 +148,12 @@ class WizardScreen(Screen):
 
     def _build_command_string(self) -> str:
         """Build the command string for preview."""
-        args = self.get_command_args()
-        if not self.COMMAND_MODULE:
-            return "[dim]No command configured[/dim]"
-        cmd = f"python -m {self.COMMAND_MODULE}"
-        if args:
-            cmd += " " + " ".join(args)
-        return cmd
+        params = self.get_params()
+        if not self.EXECUTOR_NAME:
+            return "[dim]No executor configured[/dim]"
+        # Show a preview of the operation
+        params_str = ", ".join(f"{k}={v!r}" for k, v in params.items() if v)
+        return f"[cyan]{self.EXECUTOR_NAME}[/cyan]({params_str})"
 
     def update_command_preview(self) -> None:
         """Update the command preview text."""
@@ -161,15 +163,15 @@ class WizardScreen(Screen):
         except Exception:
             pass  # Widget not mounted yet
 
-    def get_command_args(self) -> list[str]:
-        """Return CLI arguments from form state.
+    def get_params(self) -> dict:
+        """Return parameters for the executor function.
 
-        Override in subclasses to return the appropriate arguments.
+        Override in subclasses to return the appropriate parameters.
 
         Returns:
-            List of CLI arguments (without the module name).
+            Dictionary of parameters to pass to the executor.
         """
-        return []
+        return {}
 
     def validate(self) -> tuple[bool, str]:
         """Validate form before execution.
@@ -203,8 +205,8 @@ class WizardScreen(Screen):
             self.notify(error_msg, severity="error")
             return
 
-        args = self.get_command_args()
+        params = self.get_params()
         # Import here to avoid circular imports
         from .output import OutputScreen
 
-        self.app.push_screen(OutputScreen(self.COMMAND_MODULE, args))
+        self.app.push_screen(OutputScreen(self.EXECUTOR_NAME, params))

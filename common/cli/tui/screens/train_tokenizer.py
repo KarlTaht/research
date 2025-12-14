@@ -1,10 +1,10 @@
 """Train tokenizer wizard screen."""
 
 from textual.app import ComposeResult
-from textual.containers import Container
 from textual.widgets import Input, Select, Static
 
-from ..widgets import CommandPreview, LabeledInput
+from common.data import discover_local_datasets
+from ..widgets import DataSourceInput, LabeledInput, SourceType
 from .wizard_base import WizardScreen
 
 
@@ -12,41 +12,28 @@ class TrainTokenizerScreen(WizardScreen):
     """Wizard for training custom BPE tokenizer."""
 
     TITLE = "Train Tokenizer"
-    COMMAND_MODULE = "common.cli.data"
-
-    SOURCE_OPTIONS = [
-        ("JSONL file", "jsonl"),
-        ("Dataset (from registry)", "dataset"),
-    ]
+    EXECUTOR_NAME = "train_tokenizer"
 
     def compose_form(self) -> ComposeResult:
         """Compose the form fields."""
-        yield Static("Source type:", classes="form-label")
-        yield Select(
-            [(label, value) for label, value in self.SOURCE_OPTIONS],
-            value="jsonl",
-            id="source-type",
+        # Static Select for quick dataset selection (fallback)
+        datasets = discover_local_datasets()
+        if datasets:
+            yield Static("Quick select dataset:", classes="form-label")
+            yield Select(
+                [(ds.split("/")[-1], ds) for ds in datasets],
+                prompt="Choose a local dataset...",
+                id="quick-select",
+            )
+            yield Static("[dim]Or type below for custom input:[/dim]")
+
+        yield DataSourceInput(
+            label="Training data source",
+            placeholder="Dataset name or JSONL file path...",
+            hint="Enter a local dataset name or path to a JSONL file",
+            required=True,
+            input_id="source",
         )
-
-        # JSONL input (shown when source-type is "jsonl")
-        with Container(id="jsonl-container"):
-            yield LabeledInput(
-                label="JSONL file",
-                placeholder="e.g., data/corpus/train.jsonl",
-                hint="Path to JSONL file with {\"text\": \"...\"} format",
-                required=True,
-                input_id="jsonl",
-            )
-
-        # Dataset input (shown when source-type is "dataset")
-        with Container(id="dataset-container", classes="hidden"):
-            yield LabeledInput(
-                label="Dataset name",
-                placeholder="e.g., tinystories, squad",
-                hint="Dataset name from registry",
-                required=True,
-                input_id="dataset",
-            )
 
         yield LabeledInput(
             label="Vocabulary size",
@@ -70,104 +57,75 @@ class TrainTokenizerScreen(WizardScreen):
             input_id="output",
         )
 
-    def compose_command_preview(self) -> ComposeResult:
-        """Compose the command preview."""
-        yield CommandPreview(
-            module=self.COMMAND_MODULE,
-            initial_args=self.get_command_args(),
-            id="preview",
-        )
-
     def _get_execute_label(self) -> str:
         return "Train"
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Update command preview when inputs change."""
-        self._update_preview()
+        self.update_command_preview()
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        """Update visibility and command preview when source type changes."""
-        self._update_source_visibility()
-        self._update_preview()
+        """Handle quick select dropdown change."""
+        if event.value and event.select.id == "quick-select":
+            try:
+                # Update the DataSourceInput with selected dataset
+                source_input = self.query_one(DataSourceInput)
+                source_input.set_value(str(event.value))
+            except Exception:
+                pass
+        self.update_command_preview()
 
-    def _update_source_visibility(self) -> None:
-        """Show/hide inputs based on source type selection."""
-        try:
-            source_select = self.query_one("#source-type", Select)
-            dataset_container = self.query_one("#dataset-container", Container)
-            jsonl_container = self.query_one("#jsonl-container", Container)
+    def on_data_source_input_changed(self, event: DataSourceInput.Changed) -> None:
+        """Update command preview when source changes."""
+        self.update_command_preview()
 
-            if source_select.value == "jsonl":
-                jsonl_container.remove_class("hidden")
-                dataset_container.add_class("hidden")
-            else:
-                jsonl_container.add_class("hidden")
-                dataset_container.remove_class("hidden")
-        except Exception:
-            pass
-
-    def _update_preview(self) -> None:
-        """Update the command preview widget."""
-        try:
-            preview = self.query_one("#preview", CommandPreview)
-            preview.update_args(self.get_command_args())
-        except Exception:
-            pass
-
-    def get_command_args(self) -> list[str]:
-        """Build CLI arguments from form state."""
-        args = ["analyze"]
+    def get_params(self) -> dict:
+        """Build parameters for the executor."""
+        params = {}
 
         try:
-            source_select = self.query_one("#source-type", Select)
+            source_input = self.query_one(DataSourceInput)
+            source_value = source_input.get_value().strip()
+            source_type = source_input.get_source_type()
 
-            if source_select.value == "jsonl":
-                jsonl_input = self.query_one("#jsonl", Input)
-                jsonl = jsonl_input.value.strip()
-                if jsonl:
-                    args.extend(["--jsonl", jsonl])
-            else:
-                dataset_input = self.query_one("#dataset", Input)
-                dataset = dataset_input.value.strip()
-                if dataset:
-                    args.extend(["--dataset", dataset])
+            if source_type == SourceType.FILE:
+                if source_value:
+                    params["jsonl"] = source_value
+            else:  # DATASET or UNKNOWN
+                if source_value:
+                    params["dataset"] = source_value
 
             # Vocab size (required for training)
             vocab_input = self.query_one("#vocab-size", Input)
             vocab = vocab_input.value.strip()
             if vocab:
-                args.extend(["--train-tokenizer", vocab])
+                params["vocab_size"] = int(vocab)
 
             # Training subset
             subset_input = self.query_one("#train-subset", Input)
             subset = subset_input.value.strip()
             if subset:
-                args.extend(["--train-subset", subset])
+                params["subset"] = int(subset)
 
             # Output directory
             output_input = self.query_one("#output", Input)
             output = output_input.value.strip()
             if output:
-                args.extend(["--tokenizer-output", output])
+                params["output_dir"] = output
 
         except Exception:
             pass
 
-        return args
+        return params
 
     def validate(self) -> tuple[bool, str]:
         """Validate the form before execution."""
         try:
-            source_select = self.query_one("#source-type", Select)
+            source_input = self.query_one(DataSourceInput)
+            source_value = source_input.get_value().strip()
 
-            if source_select.value == "jsonl":
-                jsonl_input = self.query_one("#jsonl", Input)
-                if not jsonl_input.value.strip():
-                    return False, "JSONL file path is required"
-            else:
-                dataset_input = self.query_one("#dataset", Input)
-                if not dataset_input.value.strip():
-                    return False, "Dataset name is required"
+            if not source_value:
+                return False, "Data source is required"
 
             # Validate vocab size is a positive integer
             vocab_input = self.query_one("#vocab-size", Input)

@@ -1,13 +1,45 @@
 """Output screen for displaying command execution results."""
 
 import asyncio
+import io
 import sys
+from contextlib import redirect_stdout
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, RichLog, Static
+
+from ..executors import EXECUTORS
+
+
+class RichLogWriter(io.TextIOBase):
+    """A file-like object that writes to a RichLog widget."""
+
+    def __init__(self, rich_log: RichLog) -> None:
+        self.rich_log = rich_log
+        self._buffer = ""
+
+    def write(self, text: str) -> int:
+        """Write text to the RichLog, handling newlines properly."""
+        if not text:
+            return 0
+
+        self._buffer += text
+
+        # Process complete lines
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            self.rich_log.write(line)
+
+        return len(text)
+
+    def flush(self) -> None:
+        """Flush any remaining buffered text."""
+        if self._buffer:
+            self.rich_log.write(self._buffer)
+            self._buffer = ""
 
 
 class OutputScreen(Screen):
@@ -19,19 +51,28 @@ class OutputScreen(Screen):
         Binding("r", "rerun", "Re-run"),
     ]
 
-    def __init__(self, module: str, args: list[str], name: str | None = None) -> None:
+    def __init__(
+        self,
+        executor_name: str,
+        params: dict,
+        name: str | None = None,
+    ) -> None:
         super().__init__(name=name)
-        self.module = module
-        self.args = args
-        self._process: asyncio.subprocess.Process | None = None
+        self.executor_name = executor_name
+        self.params = params
         self._running = False
+        self._cancelled = False
 
     def compose(self) -> ComposeResult:
         """Compose the output screen."""
         yield Header()
         with Container(id="output-container"):
-            cmd_str = f"python -m {self.module} {' '.join(self.args)}"
-            yield Static(f"[bold]Running:[/bold] [cyan]{cmd_str}[/cyan]", id="command-display")
+            # Show a friendly description of the operation
+            params_str = ", ".join(f"{k}={v!r}" for k, v in self.params.items() if v)
+            yield Static(
+                f"[bold]Running:[/bold] [cyan]{self.executor_name}({params_str})[/cyan]",
+                id="command-display",
+            )
             yield RichLog(id="output-log", highlight=True, markup=True)
             yield Static("", id="status-display")
             with Horizontal(classes="button-bar"):
@@ -46,38 +87,44 @@ class OutputScreen(Screen):
     def run_command(self) -> None:
         """Start the command execution."""
         self._running = True
+        self._cancelled = False
         self.update_status("running")
         self.run_worker(self._execute_command(), exclusive=True)
 
     async def _execute_command(self) -> None:
-        """Execute the command and stream output."""
+        """Execute the command directly via the executor function."""
         log = self.query_one("#output-log", RichLog)
         log.clear()
 
-        cmd = [sys.executable, "-m", self.module] + self.args
-        log.write(f"[dim]$ {' '.join(cmd)}[/dim]\n")
+        executor = EXECUTORS.get(self.executor_name)
+        if not executor:
+            log.write(f"[red]Unknown executor: {self.executor_name}[/red]")
+            self.update_status("failed")
+            self._running = False
+            return
+
+        log.write(f"[dim]Executing {self.executor_name}...[/dim]\n")
 
         try:
-            self._process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
+            # Create a writer that sends output to RichLog
+            log_writer = RichLogWriter(log)
 
-            if self._process.stdout:
-                async for line in self._process.stdout:
-                    text = line.decode("utf-8", errors="replace")
-                    log.write(text.rstrip("\n"))
+            # Run the executor in a thread to avoid blocking
+            # Redirect stdout to our RichLog
+            def run_with_redirect():
+                old_stdout = sys.stdout
+                try:
+                    sys.stdout = log_writer
+                    executor(**self.params)
+                finally:
+                    log_writer.flush()
+                    sys.stdout = old_stdout
 
-            await self._process.wait()
-            return_code = self._process.returncode
+            await asyncio.to_thread(run_with_redirect)
 
-            if return_code == 0:
+            if not self._cancelled:
                 self.update_status("success")
-                log.write("\n[green]Command completed successfully.[/green]")
-            else:
-                self.update_status("failed")
-                log.write(f"\n[red]Command failed with exit code {return_code}.[/red]")
+                log.write("\n[green]Completed successfully.[/green]")
 
         except Exception as e:
             self.update_status("failed")
@@ -85,7 +132,6 @@ class OutputScreen(Screen):
 
         finally:
             self._running = False
-            self._process = None
 
     def update_status(self, status: str) -> None:
         """Update the status display."""
@@ -99,8 +145,8 @@ class OutputScreen(Screen):
 
     def action_back(self) -> None:
         """Go back to previous screen."""
-        if self._running and self._process:
-            self._process.terminate()
+        if self._running:
+            self._cancelled = True
         self.app.pop_screen()
 
     def action_rerun(self) -> None:

@@ -3,7 +3,7 @@
 from textual.app import ComposeResult
 from textual.widgets import Checkbox, Input, Select, Static
 
-from ..widgets import CommandPreview, LabeledInput
+from ..widgets import LabeledInput
 from .wizard_base import WizardScreen
 
 
@@ -11,7 +11,7 @@ class FinewebExtractScreen(WizardScreen):
     """Wizard for extracting domain corpus from FineWeb."""
 
     TITLE = "Extract FineWeb Corpus"
-    COMMAND_MODULE = "common.cli.data"
+    EXECUTOR_NAME = "fineweb_extract"
 
     CORPUS_OPTIONS = [
         ("Both corpora", "both"),
@@ -37,62 +37,46 @@ class FinewebExtractScreen(WizardScreen):
 
         yield Checkbox("Preview only (show stats without extracting)", id="preview")
 
-    def compose_command_preview(self) -> ComposeResult:
-        """Compose the command preview."""
-        yield CommandPreview(
-            module=self.COMMAND_MODULE,
-            initial_args=self.get_command_args(),
-            id="preview-widget",
-        )
-
     def _get_execute_label(self) -> str:
         return "Extract"
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Update command preview when inputs change."""
-        self._update_preview()
+        self.update_command_preview()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """Update command preview when select changes."""
-        self._update_preview()
+        self.update_command_preview()
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         """Update command preview when checkbox changes."""
-        self._update_preview()
+        self.update_command_preview()
 
-    def _update_preview(self) -> None:
-        """Update the command preview widget."""
-        try:
-            preview = self.query_one("#preview-widget", CommandPreview)
-            preview.update_args(self.get_command_args())
-        except Exception:
-            pass
-
-    def get_command_args(self) -> list[str]:
-        """Build CLI arguments from form state."""
-        args = ["fineweb", "extract"]
+    def get_params(self) -> dict:
+        """Build parameters for the executor."""
+        params = {}
 
         try:
             # Corpus selection
             corpus_select = self.query_one("#corpus", Select)
             if corpus_select.value and corpus_select.value != "both":
-                args.extend(["--corpus", str(corpus_select.value)])
+                params["corpus"] = str(corpus_select.value)
 
             # Target tokens
             tokens_input = self.query_one("#target-tokens", Input)
             tokens = tokens_input.value.strip()
             if tokens:
-                args.extend(["--target-tokens", tokens])
+                params["target_tokens"] = int(tokens)
 
             # Preview flag
             preview_checkbox = self.query_one("#preview", Checkbox)
             if preview_checkbox.value:
-                args.append("--preview")
+                params["preview"] = True
 
         except Exception:
             pass
 
-        return args
+        return params
 
     def validate(self) -> tuple[bool, str]:
         """Validate the form before execution."""
