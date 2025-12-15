@@ -63,7 +63,7 @@ class TorchTransformer(nn.Module):
         # Embeddings
         self.token_embedding = nn.Embedding(self.vocab_size, self.d_model)
         self.pos_embedding = nn.Embedding(self.max_seq_len, self.d_model)
-        
+
         # Transformer Blocks
         self.register_buffer('causal_mask', self._get_causal_mask())
         self.blocks = nn.ModuleList([
@@ -79,6 +79,25 @@ class TorchTransformer(nn.Module):
 
         # Weight Sync (Embedding and Projection are inverse operations)
         self.output_projection.weight = self.token_embedding.weight
+
+        # Apply proper weight initialization
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize weights with GPT-2 style scaling.
+
+        Critical for tied embeddings: default nn.Embedding init (std=1.0) causes
+        logit explosion when d_model is large. We use std=0.02 like GPT-2.
+        """
+        init_std = 0.02
+
+        for module in self.modules():
+            if isinstance(module, nn.Embedding):
+                nn.init.normal_(module.weight, mean=0.0, std=init_std)
+            elif isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, mean=0.0, std=init_std)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
 
     def _get_causal_mask(self):
         return torch.triu(

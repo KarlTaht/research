@@ -1,0 +1,44 @@
+# Training config for food corpus
+# Target: ~25-30M parameters, 1024 context length
+
+experiment_name: "food_baseline"
+
+model:
+  d_model: 768       # 512 -> 768 (1.5x)
+  n_blocks: 8        # 6 -> 8 
+  n_heads: 12        # d_head = 64 (keeping constant)
+  d_ffn: 3072        # 4x d_model
+  max_seq_len: 1024
+  dtype: bfloat16
+
+data:
+  corpus_dir: "data/corpus_food"
+  tokenizer: "combined_bpe_32768"
+  max_length: 1024
+  subset_size: 10000  # Quick test
+
+training:
+  batch_size: 8  # Balanced for 55M model on 16GB GPU
+  gradient_accumulation_steps: 4  # effective batch size = 32
+  learning_rate: 0.0003
+  min_learning_rate: 0.00003
+  lr_decay: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  num_epochs: 1
+
+  log_every: 100
+  eval_every: 500
+  save_every: 1
+  checkpoint_interval_minutes: 15  # Time-based checkpoints
+
+  max_grad_norm: 1.0
+
+evaluation:
+  generation_prompts:
+    - "To make this recipe"
+    - "The best ingredients"
+    - "When cooking"
+  max_generation_length: 100
+  temperature: 0.8
+  top_k: 50

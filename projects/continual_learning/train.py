@@ -212,6 +212,7 @@ def main():
     parser.add_argument('--config', type=str, default=None, help='Path to config.yaml')
     parser.add_argument('--resume', type=str, default=None, help='Resume from checkpoint')
     parser.add_argument('--log-file', type=str, default=None, help='Log output to file')
+    parser.add_argument('--no-accumulation', action='store_true', help='Disable gradient accumulation (override config)')
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -292,6 +293,11 @@ def main():
     # Move to device and dtype
     model = model.to(device=device, dtype=model_dtype)
 
+    # Compile model for faster training (PyTorch 2.0+)
+    if hasattr(torch, 'compile') and device.type == 'cuda':
+        print("  Compiling model with torch.compile()...")
+        model = torch.compile(model)
+
     info = model.get_model_info()
     print(f"  Parameters: {info['parameters']:,} ({info['parameters_millions']:.1f}M)")
     print(f"  Dtype: {model_dtype}")
@@ -353,12 +359,21 @@ def main():
     log_every = config['training'].get('log_every', 100)
     eval_every = config['training'].get('eval_every', 500)
     max_grad_norm = config['training'].get('max_grad_norm', 1.0)
+    gradient_accumulation_steps = config['training'].get('gradient_accumulation_steps', 1)
+    if args.no_accumulation:
+        gradient_accumulation_steps = 1
+        print("  Gradient accumulation DISABLED via --no-accumulation")
 
     # Learning rate schedule
     base_lr = config['training']['learning_rate']
     min_lr = config['training'].get('min_learning_rate', base_lr * 0.1)
     lr_decay = config['training'].get('lr_decay', None)
-    total_steps = num_epochs * len(train_loader)
+    # total_steps = optimizer steps (not micro-batches)
+    total_steps = num_epochs * (len(train_loader) // gradient_accumulation_steps)
+    effective_batch_size = config['training']['batch_size'] * gradient_accumulation_steps
+    if gradient_accumulation_steps > 1:
+        print(f"  Gradient accumulation: {gradient_accumulation_steps} steps")
+        print(f"  Effective batch size: {effective_batch_size}")
 
     warmup_ratio = config['training'].get('warmup_ratio', 0.0)
     warmup_steps = config['training'].get('warmup_steps', int(total_steps * warmup_ratio))
@@ -380,6 +395,8 @@ def main():
     print(f"\nTraining for epochs {start_epoch + 1} to {num_epochs}...")
     file_logger.info(f"Training: epochs {start_epoch + 1} to {num_epochs}, total_steps={total_steps}")
 
+    use_accumulation = gradient_accumulation_steps > 1
+
     for epoch in range(start_epoch, num_epochs):
         print(f"\n{'='*50}")
         print(f"Epoch {epoch + 1}/{num_epochs}")
@@ -390,108 +407,186 @@ def main():
         progress_bar = tqdm(train_loader, desc=f'Epoch {epoch+1}')
 
         model.train()
-        for step, batch in enumerate(progress_bar):
-            step_start_time = time.time()
 
-            input_ids = batch['input_ids'].to(device)
-            labels = batch['labels'].to(device)
-
-            # Mask padding tokens in labels (don't learn to predict padding!)
-            pad_token_id = tokenizer.pad_token_id
-            if pad_token_id is not None:
-                labels = labels.clone()
-                labels[labels == pad_token_id] = -100
-
-            # Compute learning rate with warmup and optional decay
-            if global_step < warmup_steps:
-                learning_rate = base_lr * (global_step / warmup_steps) if warmup_steps > 0 else base_lr
-            elif lr_decay == 'cosine':
-                decay_steps = total_steps - warmup_steps
-                decay_progress = (global_step - warmup_steps) / decay_steps if decay_steps > 0 else 1.0
-                learning_rate = min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * decay_progress))
-            elif lr_decay == 'linear':
-                decay_steps = total_steps - warmup_steps
-                decay_progress = (global_step - warmup_steps) / decay_steps if decay_steps > 0 else 1.0
-                learning_rate = base_lr - (base_lr - min_lr) * decay_progress
-            else:
-                learning_rate = base_lr
-
-            # Update optimizer LR
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = learning_rate
-
-            # Forward pass with autocast for mixed precision
+        if use_accumulation:
+            # === GRADIENT ACCUMULATION PATH ===
             optimizer.zero_grad()
+            accumulated_loss = 0.0
+            accumulated_tokens = 0
+            accumulation_start_time = None  # Will be set after first batch fetch
 
-            if use_amp and device.type == 'cuda':
-                with torch.amp.autocast('cuda', dtype=model_dtype):
+            for step, batch in enumerate(progress_bar):
+                # Start timing after batch is fetched (consistent with simple path)
+                if step % gradient_accumulation_steps == 0:
+                    accumulation_start_time = time.time()
+
+                input_ids = batch['input_ids'].to(device)
+                labels = batch['labels'].to(device)
+
+                # Mask padding tokens
+                pad_token_id = tokenizer.pad_token_id
+                if pad_token_id is not None:
+                    labels = labels.clone()
+                    labels[labels == pad_token_id] = -100
+
+                # Forward pass
+                if use_amp and device.type == 'cuda':
+                    with torch.amp.autocast('cuda', dtype=model_dtype):
+                        outputs = model(input_ids, labels=labels)
+                        loss = outputs['loss']
+                else:
                     outputs = model(input_ids, labels=labels)
                     loss = outputs['loss']
-            else:
-                outputs = model(input_ids, labels=labels)
-                loss = outputs['loss']
 
-            # Backward pass
-            if scaler:
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-                scaler.step(optimizer)
-                scaler.update()
-            else:
+                # Scale and backward (accumulate gradients)
+                scaled_loss = loss / gradient_accumulation_steps
+                scaled_loss.backward()
+
+                accumulated_loss += loss.item()
+                accumulated_tokens += input_ids.numel()
+
+                # Step optimizer after accumulating
+                if (step + 1) % gradient_accumulation_steps == 0:
+                    # Compute learning rate
+                    if global_step < warmup_steps:
+                        learning_rate = base_lr * (global_step / warmup_steps) if warmup_steps > 0 else base_lr
+                    elif lr_decay == 'cosine':
+                        decay_steps = total_steps - warmup_steps
+                        decay_progress = (global_step - warmup_steps) / decay_steps if decay_steps > 0 else 1.0
+                        learning_rate = min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * decay_progress))
+                    elif lr_decay == 'linear':
+                        decay_steps = total_steps - warmup_steps
+                        decay_progress = (global_step - warmup_steps) / decay_steps if decay_steps > 0 else 1.0
+                        learning_rate = base_lr - (base_lr - min_lr) * decay_progress
+                    else:
+                        learning_rate = base_lr
+
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] = learning_rate
+
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+                    # Metrics
+                    avg_loss = accumulated_loss / gradient_accumulation_steps
+                    accumulation_time = time.time() - accumulation_start_time
+                    tokens_per_second = accumulated_tokens / accumulation_time
+
+                    global_step += 1
+                    epoch_losses.append(avg_loss)
+
+                    logger.log_step(epoch=epoch, step=step, train_loss=avg_loss, learning_rate=learning_rate,
+                                    approximate_tflops=tflops_per_step, tokens_per_second=tokens_per_second,
+                                    batch_time_ms=accumulation_time * 1000)
+
+                    progress_bar.set_postfix({'loss': f"{avg_loss:.4f}", 'lr': f"{learning_rate:.2e}",
+                                              'ktok/s': f"{tokens_per_second / 1e3:.3f}"})
+
+                    # Time-based checkpoint
+                    if time.time() - last_checkpoint_time >= checkpoint_interval_seconds:
+                        avg_recent_loss = sum(epoch_losses[-100:]) / min(100, len(epoch_losses))
+                        checkpoint_manager.save_checkpoint(epoch=epoch + 1, global_step=global_step,
+                            train_config=config['training'], learning_rate=learning_rate,
+                            metrics={'train_loss': avg_recent_loss}, is_best=False)
+                        elapsed_min = (time.time() - last_checkpoint_time) / 60
+                        print(f"\n  [Checkpoint] Saved at step {global_step} (loss={avg_recent_loss:.4f}, {elapsed_min:.1f}min elapsed)")
+                        file_logger.info(f"Time checkpoint: step={global_step}, loss={avg_recent_loss:.4f}")
+                        last_checkpoint_time = time.time()
+
+                    # Periodic evaluation
+                    if global_step % eval_every == 0 and val_loader:
+                        val_metrics = evaluate(model, val_loader, device, tokenizer=tokenizer, max_batches=50)
+                        print(f"\n  Step {global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}")
+                        file_logger.info(f"Eval step={global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}")
+
+                    # Reset accumulators (timer resets at start of next window)
+                    accumulated_loss = 0.0
+                    accumulated_tokens = 0
+
+        else:
+            # === SIMPLE PATH (no accumulation) ===
+            for step, batch in enumerate(progress_bar):
+                step_start_time = time.time()
+
+                input_ids = batch['input_ids'].to(device)
+                labels = batch['labels'].to(device)
+
+                # Mask padding tokens
+                pad_token_id = tokenizer.pad_token_id
+                if pad_token_id is not None:
+                    labels = labels.clone()
+                    labels[labels == pad_token_id] = -100
+
+                # Compute learning rate
+                if global_step < warmup_steps:
+                    learning_rate = base_lr * (global_step / warmup_steps) if warmup_steps > 0 else base_lr
+                elif lr_decay == 'cosine':
+                    decay_steps = total_steps - warmup_steps
+                    decay_progress = (global_step - warmup_steps) / decay_steps if decay_steps > 0 else 1.0
+                    learning_rate = min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * decay_progress))
+                elif lr_decay == 'linear':
+                    decay_steps = total_steps - warmup_steps
+                    decay_progress = (global_step - warmup_steps) / decay_steps if decay_steps > 0 else 1.0
+                    learning_rate = base_lr - (base_lr - min_lr) * decay_progress
+                else:
+                    learning_rate = base_lr
+
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = learning_rate
+
+                # Forward pass
+                optimizer.zero_grad()
+                if use_amp and device.type == 'cuda':
+                    with torch.amp.autocast('cuda', dtype=model_dtype):
+                        outputs = model(input_ids, labels=labels)
+                        loss = outputs['loss']
+                else:
+                    outputs = model(input_ids, labels=labels)
+                    loss = outputs['loss']
+
+                # Backward and step
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                 optimizer.step()
 
-            batch_time_ms = (time.time() - step_start_time) * 1000
-            tokens_per_second = input_ids.numel() / (batch_time_ms / 1000)
+                # Sync CUDA before measuring time (GPU ops are async)
+                if device.type == 'cuda':
+                    torch.cuda.synchronize()
 
-            global_step += 1
-            epoch_losses.append(loss.item())
+                # Metrics
+                batch_time_ms = (time.time() - step_start_time) * 1000
+                tokens_per_second = input_ids.numel() / (batch_time_ms / 1000)
 
-            # Log step
-            logger.log_step(
-                epoch=epoch,
-                step=step,
-                train_loss=loss.item(),
-                learning_rate=learning_rate,
-                approximate_tflops=tflops_per_step,
-                tokens_per_second=tokens_per_second,
-                batch_time_ms=batch_time_ms,
-            )
+                if global_step < 3:
+                    print(f"\n  DEBUG step {global_step}: tokens={input_ids.numel()}, time={batch_time_ms:.1f}ms, tok/s={tokens_per_second:.0f}")
 
-            # Update progress bar
-            progress_bar.set_postfix({
-                'loss': f"{loss.item():.4f}",
-                'lr': f"{learning_rate:.2e}",
-                'tok/s': f"{tokens_per_second:.0f}",
-            })
+                global_step += 1
+                epoch_losses.append(loss.item())
 
-            # Time-based checkpoint (saves progress every N minutes)
-            if time.time() - last_checkpoint_time >= checkpoint_interval_seconds:
-                avg_recent_loss = sum(epoch_losses[-100:]) / min(100, len(epoch_losses))
-                checkpoint_manager.save_checkpoint(
-                    epoch=epoch + 1,
-                    global_step=global_step,
-                    train_config=config['training'],
-                    learning_rate=learning_rate,
-                    metrics={'train_loss': avg_recent_loss},
-                    is_best=False,
-                )
-                elapsed_min = (time.time() - last_checkpoint_time) / 60
-                print(f"\n  [Checkpoint] Saved at step {global_step} (loss={avg_recent_loss:.4f}, {elapsed_min:.1f}min elapsed)")
-                file_logger.info(f"Time checkpoint: step={global_step}, loss={avg_recent_loss:.4f}")
-                last_checkpoint_time = time.time()
+                logger.log_step(epoch=epoch, step=step, train_loss=loss.item(), learning_rate=learning_rate,
+                                approximate_tflops=tflops_per_step, tokens_per_second=tokens_per_second,
+                                batch_time_ms=batch_time_ms)
 
-            # Periodic evaluation
-            if global_step % eval_every == 0 and val_loader:
-                val_metrics = evaluate(model, val_loader, device, tokenizer=tokenizer, max_batches=50)
-                print(
-                    f"\n  Step {global_step}: "
-                    f"val_loss={val_metrics['loss']:.4f}, "
-                    f"val_ppl={val_metrics['perplexity']:.2f}"
-                )
-                file_logger.info(f"Eval step={global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}")
+                progress_bar.set_postfix({'loss': f"{loss.item():.4f}", 'lr': f"{learning_rate:.2e}",
+                                          'mtok/s': f"{tokens_per_second / 1e6:.2f}"})
+
+                # Time-based checkpoint
+                if time.time() - last_checkpoint_time >= checkpoint_interval_seconds:
+                    avg_recent_loss = sum(epoch_losses[-100:]) / min(100, len(epoch_losses))
+                    checkpoint_manager.save_checkpoint(epoch=epoch + 1, global_step=global_step,
+                        train_config=config['training'], learning_rate=learning_rate,
+                        metrics={'train_loss': avg_recent_loss}, is_best=False)
+                    elapsed_min = (time.time() - last_checkpoint_time) / 60
+                    print(f"\n  [Checkpoint] Saved at step {global_step} (loss={avg_recent_loss:.4f}, {elapsed_min:.1f}min elapsed)")
+                    file_logger.info(f"Time checkpoint: step={global_step}, loss={avg_recent_loss:.4f}")
+                    last_checkpoint_time = time.time()
+
+                # Periodic evaluation
+                if global_step % eval_every == 0 and val_loader:
+                    val_metrics = evaluate(model, val_loader, device, tokenizer=tokenizer, max_batches=50)
+                    print(f"\n  Step {global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}")
+                    file_logger.info(f"Eval step={global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}")
 
         # End of epoch
         epoch_time = time.time() - epoch_start_time

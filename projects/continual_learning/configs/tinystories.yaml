@@ -4,10 +4,10 @@
 experiment_name: "tinystories_torch_validation"
 
 model:
-  d_model: 256
-  n_blocks: 6
-  n_heads: 4        # d_head = 64
-  d_ffn: 1024       # 4x d_model
+  d_model: 512
+  n_blocks: 8
+  n_heads: 8        # d_head = 64
+  d_ffn: 2048       # 4x d_model
   max_seq_len: 256
   dtype: bfloat16
 
@@ -20,6 +20,7 @@ data:
 
 training:
   batch_size: 16
+  gradient_accumulation_steps: 2  # effective batch size = 32
   learning_rate: 0.0003
   min_learning_rate: 0.00003
   lr_decay: cosine

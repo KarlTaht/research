@@ -1,0 +1,44 @@
+# Training config for automotive corpus
+# "Square"
+
+experiment_name: "automotive_236m"
+
+model:
+  d_model: 1024
+  n_blocks: 16
+  n_heads: 16         # d_head = 64
+  d_ffn: 4096         # 4x d_model
+  max_seq_len: 1024
+  dtype: bfloat16
+
+data:
+  corpus_dir: "data/corpus_automotive"
+  tokenizer: "combined_bpe_32768"
+  max_length: 1024
+  # subset_size: 10000  # Uncomment for quick tests
+
+training:
+  batch_size: 4
+  gradient_accumulation_steps: 16  # effective batch size = 64
+  learning_rate: 0.0003
+  min_learning_rate: 0.00003
+  lr_decay: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  num_epochs: 3
+
+  log_every: 100
+  eval_every: 500
+  save_every: 1
+  checkpoint_interval_minutes: 30  # Time-based checkpoints
+
+  max_grad_norm: 1.0
+
+evaluation:
+  generation_prompts:
+    - "The engine"
+    - "When you drive"
+    - "The best way to"
+  max_generation_length: 100
+  temperature: 0.8
+  top_k: 50

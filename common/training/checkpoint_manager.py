@@ -98,15 +98,21 @@ class CheckpointManager:
         Returns:
             Path to saved checkpoint file
         """
-        # Get model state
-        if hasattr(self.model, 'model') and hasattr(self.model.model, 'state_dict'):
+        # Get model state, handling torch.compile() wrapped models
+        model_to_save = self.model
+
+        # Unwrap torch.compile() model if necessary
+        if hasattr(model_to_save, '_orig_mod'):
+            model_to_save = model_to_save._orig_mod
+
+        if hasattr(model_to_save, 'model') and hasattr(model_to_save.model, 'state_dict'):
             # CustomTransformerWrapper
-            model_state = self.model.model.state_dict()
-            model_config = self.model.model.get_config()
-        elif hasattr(self.model, 'state_dict'):
-            # BaseLanguageModel
-            model_state = self.model.state_dict()
-            model_config = getattr(self.model, 'model_config', {})
+            model_state = model_to_save.model.state_dict()
+            model_config = model_to_save.model.get_config()
+        elif hasattr(model_to_save, 'state_dict'):
+            # BaseLanguageModel or TorchTransformer
+            model_state = model_to_save.state_dict()
+            model_config = getattr(model_to_save, 'model_config', {})
         else:
             raise ValueError("Model must have state_dict() method")
 
@@ -181,13 +187,23 @@ class CheckpointManager:
         print(f"Loading checkpoint: {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 
+        # Handle state dict from torch.compile() wrapped models (legacy checkpoints)
+        state_dict = checkpoint['model_state_dict']
+        if any(k.startswith('_orig_mod.') for k in state_dict.keys()):
+            state_dict = {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
+
+        # Unwrap torch.compile() model if necessary for loading
+        model_to_load = self.model
+        if hasattr(model_to_load, '_orig_mod'):
+            model_to_load = model_to_load._orig_mod
+
         # Restore model state
-        if hasattr(self.model, 'model') and hasattr(self.model.model, 'load_state_dict'):
+        if hasattr(model_to_load, 'model') and hasattr(model_to_load.model, 'load_state_dict'):
             # CustomTransformerWrapper
-            self.model.model.load_state_dict(checkpoint['model_state_dict'])
-        elif hasattr(self.model, 'load_state_dict'):
+            model_to_load.model.load_state_dict(state_dict)
+        elif hasattr(model_to_load, 'load_state_dict'):
             # BaseLanguageModel
-            self.model.load_state_dict(checkpoint['model_state_dict'])
+            model_to_load.load_state_dict(state_dict)
         else:
             raise ValueError("Model must have load_state_dict() method")
 
