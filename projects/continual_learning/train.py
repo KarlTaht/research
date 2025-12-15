@@ -31,34 +31,34 @@ from datasets import load_from_disk
 from tqdm import tqdm
 import argparse
 import time
+import logging
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from models import TorchTransformer, create_model
-from common.data import get_models_dir
+from common.data import get_models_dir, load_training_data, get_dataset_config
 from common.training import CheckpointManager
 from common.utils import TrainingLogger, estimate_flops_per_step, format_flops
 
 
-class TeeLogger:
-    """Write to both stdout and a log file."""
+def setup_file_logger(log_path: Path) -> logging.Logger:
+    """Set up file-only logging (no tqdm noise).
 
-    def __init__(self, log_file: Path):
-        self.terminal = sys.stdout
-        self.log_file = open(log_file, 'w', buffering=1)
+    This creates a clean log file with important events only.
+    tqdm progress stays on console only.
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def write(self, message):
-        self.terminal.write(message)
-        self.log_file.write(message)
-        self.log_file.flush()
+    file_logger = logging.getLogger('training_file')
+    file_logger.setLevel(logging.INFO)
+    file_logger.handlers.clear()  # Clear any existing handlers
 
-    def flush(self):
-        self.terminal.flush()
-        self.log_file.flush()
+    file_handler = logging.FileHandler(log_path, mode='w')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+    file_logger.addHandler(file_handler)
 
-    def close(self):
-        self.log_file.close()
+    return file_logger
 
 
 def load_config(config_path: str = None):
@@ -70,12 +70,28 @@ def load_config(config_path: str = None):
 
 
 def load_tokenizer(tokenizer_name: str):
-    """Load tokenizer from assets/models/tokenizers/."""
-    tokenizer_path = get_models_dir() / 'tokenizers' / tokenizer_name
-    if not tokenizer_path.exists():
-        tokenizer_path = get_models_dir() / tokenizer_name
-    if not tokenizer_path.exists():
-        tokenizer_path = Path(tokenizer_name)
+    """Load tokenizer from various asset locations."""
+    from common.data import get_datasets_dir
+
+    # Search paths in priority order
+    search_paths = [
+        get_models_dir() / 'tokenizers' / tokenizer_name,
+        get_datasets_dir() / 'HuggingFaceFW' / 'fineweb' / 'tokenizers' / tokenizer_name,
+        get_models_dir() / tokenizer_name,
+        Path(tokenizer_name),  # Absolute/relative path fallback
+    ]
+
+    tokenizer_path = None
+    for path in search_paths:
+        if path.exists():
+            tokenizer_path = path
+            break
+
+    if tokenizer_path is None:
+        raise FileNotFoundError(
+            f"Tokenizer '{tokenizer_name}' not found. Searched:\n" +
+            "\n".join(f"  - {p}" for p in search_paths)
+        )
 
     print(f"  Loading tokenizer from: {tokenizer_path}")
     tokenizer = PreTrainedTokenizerFast.from_pretrained(str(tokenizer_path))
@@ -156,18 +172,25 @@ def load_pretokenized_data(
 
 
 @torch.no_grad()
-def evaluate(model, val_loader, device, max_batches=100):
+def evaluate(model, val_loader, device, tokenizer=None, max_batches=100):
     """Evaluate model on validation set."""
     model.eval()
     total_loss = 0.0
     total_tokens = 0
 
+    pad_token_id = tokenizer.pad_token_id if tokenizer else None
+
     for i, batch in enumerate(val_loader):
-        if i >= max_batches:
+        if max_batches is not None and i >= max_batches:
             break
 
         input_ids = batch['input_ids'].to(device)
         labels = batch['labels'].to(device)
+
+        # Mask padding tokens in labels
+        if pad_token_id is not None:
+            labels = labels.clone()
+            labels[labels == pad_token_id] = -100
 
         outputs = model(input_ids, labels=labels)
         loss = outputs['loss']
@@ -194,32 +217,53 @@ def main():
     config = load_config(args.config)
     experiment_name = config.get('experiment_name', 'continual_learning')
 
-    # Setup logging
-    tee_logger = None
+    # Setup file logging (separate from tqdm console output)
     log_path = Path(args.log_file) if args.log_file else Path(__file__).parent / 'logs' / f'{experiment_name}.log'
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    tee_logger = TeeLogger(log_path)
-    sys.stdout = tee_logger
-    sys.stderr = tee_logger
+    file_logger = setup_file_logger(log_path)
+
     print(f"Logging to: {log_path}")
+    file_logger.info(f"Experiment: {experiment_name}")
+    file_logger.info(f"Config: {args.config}")
 
     print("Configuration:")
     print(yaml.dump(config, default_flow_style=False))
+    file_logger.info(f"Configuration:\n{yaml.dump(config, default_flow_style=False)}")
 
     # Determine device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\nDevice: {device}")
+    file_logger.info(f"Device: {device}")
 
-    # Load data
-    print(f"\nLoading data from: {config['data']['corpus_dir']}")
-    corpus_dir = Path(__file__).parent / config['data']['corpus_dir']
-    train_loader, val_loader, tokenizer = load_pretokenized_data(
-        data_dir=corpus_dir,
-        tokenizer_name=config['data']['tokenizer'],
-        max_length=config['data']['max_length'],
-        batch_size=config['training']['batch_size'],
-        subset_size=config['data'].get('subset_size'),
-    )
+    # Load data - supports both pre-tokenized corpora and HuggingFace datasets
+    if 'corpus_dir' in config['data']:
+        # Pre-tokenized corpus mode (automotive, food, etc.)
+        print(f"\nLoading pre-tokenized data from: {config['data']['corpus_dir']}")
+        corpus_dir = Path(__file__).parent / config['data']['corpus_dir']
+        train_loader, val_loader, tokenizer = load_pretokenized_data(
+            data_dir=corpus_dir,
+            tokenizer_name=config['data']['tokenizer'],
+            max_length=config['data']['max_length'],
+            batch_size=config['training']['batch_size'],
+            subset_size=config['data'].get('subset_size'),
+        )
+    else:
+        # HuggingFace dataset mode (tinystories, etc.)
+        dataset_name = config['data']['dataset']
+        print(f"\nLoading dataset: {dataset_name}")
+        dataset_config = get_dataset_config(dataset_name)
+        print(f"  Description: {dataset_config['description']}")
+
+        # Load tokenizer
+        tokenizer = load_tokenizer(config['data']['tokenizer'])
+
+        train_loader, val_loader = load_training_data(
+            dataset_name,
+            tokenizer,
+            max_length=config['data']['max_length'],
+            batch_size=config['training']['batch_size'],
+            subset_size=config['data'].get('subset_size'),
+            val_subset_size=config['data'].get('val_subset_size'),
+        )
 
     print(f"  Train batches: {len(train_loader)}")
     if val_loader:
@@ -236,15 +280,14 @@ def main():
 
     # Initialize model
     print("\nInitializing TorchTransformer...")
-    model = TorchTransformer(
-        vocab_size=len(tokenizer),
-        d_model=config['model']['d_model'],
-        n_heads=config['model']['n_heads'],
-        n_layers=config['model']['n_layers'],
-        d_ff=config['model']['d_ff'],
-        max_seq_len=config['model']['max_seq_len'],
-        dropout=config['model'].get('dropout', 0.1),
-    )
+    model = TorchTransformer({
+        'vocab_size': len(tokenizer),
+        'd_model': config['model']['d_model'],
+        'n_heads': config['model']['n_heads'],
+        'n_blocks': config['model']['n_blocks'],
+        'd_ffn': config['model']['d_ffn'],
+        'max_seq_len': config['model']['max_seq_len'],
+    })
 
     # Move to device and dtype
     model = model.to(device=device, dtype=model_dtype)
@@ -252,6 +295,7 @@ def main():
     info = model.get_model_info()
     print(f"  Parameters: {info['parameters']:,} ({info['parameters_millions']:.1f}M)")
     print(f"  Dtype: {model_dtype}")
+    file_logger.info(f"Model: {info['parameters']:,} params ({info['parameters_millions']:.1f}M), dtype={model_dtype}")
 
     # Setup optimizer
     optimizer = torch.optim.AdamW(
@@ -266,7 +310,6 @@ def main():
     checkpoint_manager = CheckpointManager(
         checkpoint_dir=str(checkpoint_dir),
         model=model,
-        optimizer=optimizer,
         experiment_name=experiment_name,
         max_checkpoints=5,
     )
@@ -285,8 +328,8 @@ def main():
         seq_len=config['data']['max_length'],
         vocab_size=len(tokenizer),
         d_model=config['model']['d_model'],
-        d_ffn=config['model']['d_ff'],
-        n_blocks=config['model']['n_layers'],
+        d_ffn=config['model']['d_ffn'],
+        n_blocks=config['model']['n_blocks'],
         n_heads=config['model']['n_heads'],
     )
     print(f"  Estimated TFLOPs/step: {format_flops(tflops_per_step)}")
@@ -322,12 +365,20 @@ def main():
     if warmup_steps > 0:
         print(f"  Warmup: {warmup_steps} steps")
 
-    # Use mixed precision for bfloat16
-    use_amp = model_dtype == torch.bfloat16
-    scaler = torch.amp.GradScaler('cuda') if use_amp and device.type == 'cuda' else None
+    # Use autocast for bfloat16 (no scaler needed - bfloat16 has enough range)
+    use_amp = model_dtype == torch.bfloat16 and device.type == 'cuda'
+    # Note: GradScaler is only needed for float16, not bfloat16
+    scaler = None
+
+    # Time-based checkpointing (default: 15 minutes)
+    checkpoint_interval_minutes = config['training'].get('checkpoint_interval_minutes', 15)
+    checkpoint_interval_seconds = checkpoint_interval_minutes * 60
+    last_checkpoint_time = time.time()
+    file_logger.info(f"Time-based checkpoints: every {checkpoint_interval_minutes} minutes")
 
     # Training loop
     print(f"\nTraining for epochs {start_epoch + 1} to {num_epochs}...")
+    file_logger.info(f"Training: epochs {start_epoch + 1} to {num_epochs}, total_steps={total_steps}")
 
     for epoch in range(start_epoch, num_epochs):
         print(f"\n{'='*50}")
@@ -344,6 +395,12 @@ def main():
 
             input_ids = batch['input_ids'].to(device)
             labels = batch['labels'].to(device)
+
+            # Mask padding tokens in labels (don't learn to predict padding!)
+            pad_token_id = tokenizer.pad_token_id
+            if pad_token_id is not None:
+                labels = labels.clone()
+                labels[labels == pad_token_id] = -100
 
             # Compute learning rate with warmup and optional decay
             if global_step < warmup_steps:
@@ -410,14 +467,31 @@ def main():
                 'tok/s': f"{tokens_per_second:.0f}",
             })
 
+            # Time-based checkpoint (saves progress every N minutes)
+            if time.time() - last_checkpoint_time >= checkpoint_interval_seconds:
+                avg_recent_loss = sum(epoch_losses[-100:]) / min(100, len(epoch_losses))
+                checkpoint_manager.save_checkpoint(
+                    epoch=epoch + 1,
+                    global_step=global_step,
+                    train_config=config['training'],
+                    learning_rate=learning_rate,
+                    metrics={'train_loss': avg_recent_loss},
+                    is_best=False,
+                )
+                elapsed_min = (time.time() - last_checkpoint_time) / 60
+                print(f"\n  [Checkpoint] Saved at step {global_step} (loss={avg_recent_loss:.4f}, {elapsed_min:.1f}min elapsed)")
+                file_logger.info(f"Time checkpoint: step={global_step}, loss={avg_recent_loss:.4f}")
+                last_checkpoint_time = time.time()
+
             # Periodic evaluation
             if global_step % eval_every == 0 and val_loader:
-                val_metrics = evaluate(model, val_loader, device, max_batches=50)
+                val_metrics = evaluate(model, val_loader, device, tokenizer=tokenizer, max_batches=50)
                 print(
                     f"\n  Step {global_step}: "
                     f"val_loss={val_metrics['loss']:.4f}, "
                     f"val_ppl={val_metrics['perplexity']:.2f}"
                 )
+                file_logger.info(f"Eval step={global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}")
 
         # End of epoch
         epoch_time = time.time() - epoch_start_time
@@ -425,16 +499,18 @@ def main():
 
         print(f"\nEpoch {epoch + 1} complete in {epoch_time:.1f}s")
         print(f"  Train loss: {train_loss:.4f}")
+        file_logger.info(f"Epoch {epoch + 1} complete: time={epoch_time:.1f}s, train_loss={train_loss:.4f}")
 
         # Full evaluation at end of epoch
         if val_loader:
             print("  Running full evaluation...")
-            val_metrics = evaluate(model, val_loader, device, max_batches=None)
+            val_metrics = evaluate(model, val_loader, device, tokenizer=tokenizer, max_batches=None)
             val_loss = val_metrics['loss']
             val_perplexity = val_metrics['perplexity']
 
             print(f"  Val loss: {val_loss:.4f}")
             print(f"  Val perplexity: {val_perplexity:.2f}")
+            file_logger.info(f"Epoch {epoch + 1} eval: val_loss={val_loss:.4f}, val_ppl={val_perplexity:.2f}")
 
             logger.log_epoch(
                 epoch=epoch,
@@ -476,11 +552,8 @@ def main():
     print(f"  Checkpoints saved to: {checkpoint_dir}")
     print("="*50)
 
-    # Cleanup file logger
-    if tee_logger:
-        sys.stdout = tee_logger.terminal
-        sys.stderr = tee_logger.terminal
-        tee_logger.close()
+    file_logger.info(f"Training complete: total_steps={global_step}, best_val_loss={best_val_loss:.4f}")
+    file_logger.info(f"Checkpoints saved to: {checkpoint_dir}")
 
 
 if __name__ == '__main__':

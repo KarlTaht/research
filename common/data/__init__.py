@@ -1,12 +1,8 @@
 """Data utilities for datasets, data loading, and preprocessing."""
 
-from .download_hf_dataset import (
+from .download_dataset import (
     download_dataset,
     download_model,
-    get_default_assets_dir,
-    get_datasets_dir,
-    get_models_dir,
-    discover_local_datasets,
 )
 
 from .dataset_registry import (
@@ -16,6 +12,10 @@ from .dataset_registry import (
     create_lm_dataloader,
     load_training_data,
     list_datasets,
+    get_default_assets_dir,
+    get_datasets_dir,
+    get_models_dir,
+    discover_local_datasets,
 )
 
 from .token_analyzer import (

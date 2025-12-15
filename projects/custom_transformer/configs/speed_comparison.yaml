@@ -1,0 +1,35 @@
+# Speed comparison config - matches TorchTransformer tinystories.yaml
+# Purpose: Compare training throughput between CustomTransformer and TorchTransformer
+
+experiment_name: "custom_transformer_speed_comparison"
+
+model:
+  d_model: 256
+  n_blocks: 6
+  n_heads: 4
+  d_ffn: 1024
+  max_seq_len: 256
+  dtype: bfloat16
+
+data:
+  dataset: "tinystories"
+  tokenizer: "tinystories_bpe_4096"
+  max_length: 256
+  subset_size: 10000
+  val_subset_size: 1000
+
+training:
+  batch_size: 16
+  learning_rate: 0.0003
+  num_epochs: 1
+  log_every: 50
+  eval_every: 200
+  max_grad_norm: 1.0
+
+evaluation:
+  generation_prompts:
+    - "Once upon a time"
+  max_generation_length: 50
+  temperature: 0.8
+  top_k: 50
+  evaluate_coherence: false

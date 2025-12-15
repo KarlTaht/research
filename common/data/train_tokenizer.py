@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Iterator, Optional
 
-from .download_hf_dataset import get_models_dir
+from .dataset_registry import get_models_dir
 
 
 def train_custom_tokenizer_from_file(

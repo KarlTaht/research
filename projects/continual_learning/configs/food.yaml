@@ -5,31 +5,31 @@ experiment_name: "food_baseline"
 
 model:
   d_model: 512
-  n_layers: 6
+  n_blocks: 6
   n_heads: 8        # d_head = 64
-  d_ff: 2048        # 4x d_model
+  d_ffn: 2048       # 4x d_model
   max_seq_len: 1024
-  dropout: 0.1
   dtype: bfloat16
 
 data:
   corpus_dir: "data/corpus_food"
   tokenizer: "combined_bpe_32768"
   max_length: 1024
-  # subset_size: 10000  # Uncomment for quick tests
+  subset_size: 10000  # Quick test
 
 training:
-  batch_size: 16
-  learning_rate: 3e-4
-  min_learning_rate: 3e-5
+  batch_size: 12  # Balanced for 36M model on 16GB GPU
+  learning_rate: 0.0003
+  min_learning_rate: 0.00003
   lr_decay: cosine
   warmup_ratio: 0.05
   weight_decay: 0.01
-  num_epochs: 3
+  num_epochs: 1
 
   log_every: 100
   eval_every: 500
   save_every: 1
+  checkpoint_interval_minutes: 15  # Time-based checkpoints
 
   max_grad_norm: 1.0
 

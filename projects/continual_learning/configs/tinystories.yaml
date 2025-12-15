@@ -1,0 +1,43 @@
+# Training config for TinyStories validation
+# Purpose: Validate TorchTransformer works with TinyStories dataset
+
+experiment_name: "tinystories_torch_validation"
+
+model:
+  d_model: 256
+  n_blocks: 6
+  n_heads: 4        # d_head = 64
+  d_ffn: 1024       # 4x d_model
+  max_seq_len: 256
+  dtype: bfloat16
+
+data:
+  dataset: "tinystories"
+  tokenizer: "tinystories_bpe_4096"
+  max_length: 256        # Use 256 to match existing cache
+  # subset_size: 10000     # Small subset for quick validation
+  val_subset_size: 1000
+
+training:
+  batch_size: 16
+  learning_rate: 0.0003
+  min_learning_rate: 0.00003
+  lr_decay: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  num_epochs: 3
+  checkpoint_interval_minutes: 15  # Time-based checkpoints
+
+  log_every: 50
+  eval_every: 200
+
+  max_grad_norm: 1.0
+
+evaluation:
+  generation_prompts:
+    - "Once upon a time"
+    - "The little girl"
+    - "One day, a boy named"
+  max_generation_length: 100
+  temperature: 0.8
+  top_k: 50

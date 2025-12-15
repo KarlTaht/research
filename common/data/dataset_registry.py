@@ -7,8 +7,6 @@ import torch
 from torch.utils.data import DataLoader
 from datasets import load_from_disk, Dataset
 
-from .download_hf_dataset import get_datasets_dir
-
 
 def get_tokenizer_cache_key(tokenizer, max_length: int) -> str:
     """Generate a cache key for tokenized datasets.

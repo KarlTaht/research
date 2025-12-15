@@ -29,8 +29,7 @@ import re
 import numpy as np
 from datasets import Dataset
 
-from .dataset_registry import load_dataset_from_registry, get_dataset_config, DATASET_REGISTRY
-from .download_hf_dataset import get_models_dir
+from .dataset_registry import load_dataset_from_registry, get_dataset_config, DATASET_REGISTRY, get_models_dir
 
 
 @dataclass
