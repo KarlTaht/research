@@ -19,11 +19,18 @@ A hands-on experiment to build intuition for catastrophic forgetting in transfor
 
 | Phase | Status | Artifacts |
 |-------|--------|-----------|
-| **1. Data Preparation** | ✅ Complete | Two domain corpora extracted from FineWeb |
+| **1. Data Preparation** | ✅ Complete | Two domain corpora (automotive, food) from FineWeb |
 | **2. Tokenizer** | ✅ Complete | Combined BPE tokenizer (32,768 vocab) |
 | **Pre-tokenization** | ✅ Complete | Cached tokenized datasets for instant loading |
-| **3. Model Architecture** | ✅ Skeleton | `TorchTransformer` class (needs transformer layers) |
-| **4. Training Infrastructure** | ✅ Complete | `train.py` + configs for both corpora |
+| **3. Model Architecture** | ✅ Complete | `TorchTransformer` - full PyTorch transformer |
+| **4. Training Infrastructure** | ✅ Complete | `train.py`, `validate.py`, time-based checkpoints, logging |
+| **Model Validation** | 🔄 In Progress | TinyStories training run to verify model works |
+
+### 🔜 Next Steps
+
+1. **Complete TinyStories validation** - verify model learns coherent text
+2. **QA Test Generation** (Phase 5) - Generate test suites with Claude Haiku
+3. **Continual Learning Baselines** - Run the three baseline experiments
 
 ### 📦 Prepared Corpora
 
@@ -68,24 +75,31 @@ data/corpus_automotive/train_tokenized/combined_bpe_32768_v32768_len1024/
 data/corpus_food/train_tokenized/combined_bpe_32768_v32768_len1024/
 ```
 
-### 🎯 Next Steps
+### 🎯 Remaining Work
 
-1. **Phase 3:** Complete transformer layers in `TorchTransformer` (attention, FFN)
-2. **Phase 5:** Evaluation harness (QA test generation with Claude Haiku)
-3. **Phase 6:** Run baseline experiments
+1. **Phase 5:** Evaluation harness (QA test generation with Claude Haiku)
+2. **Phase 6:** Run continual learning baseline experiments (see below)
 
 ### 🏗️ Training Infrastructure
 
-**Model:** `models/torch_transformer.py`
+**Model:** `models/TorchTransformer.py`
+- Full PyTorch transformer (RMSNorm, RoPE, GQA-ready attention, SwiGLU FFN)
 - Extends `BaseLanguageModel` from `common.models`
-- Config: 6 layers, 512 dim, 8 heads, 2048 FFN, 1024 context
-- ~34M parameters (with 32k vocab embeddings)
+- Configurable: d_model, n_blocks, n_heads, d_ffn, max_seq_len
+- bfloat16 by default
 
 **Training:** `train.py`
 - Loads pre-tokenized data from cache (~1s startup)
+- Supports both pre-tokenized corpora and HuggingFace datasets
 - bfloat16 mixed precision
 - Cosine LR decay with warmup
-- Checkpoint saving/resumption
+- Time-based checkpointing (every 15 min)
+- Clean file logging (separate from tqdm)
+
+**Validation:** `validate.py`
+- Interactive chat mode (`--chat`)
+- Single prompt generation (`--prompt`)
+- Temperature/top-k controls
 
 **Usage:**
 ```bash
@@ -95,8 +109,15 @@ python train.py --config configs/automotive.yaml
 # Train on food corpus
 python train.py --config configs/food.yaml
 
+# Train on TinyStories (model validation)
+python train.py --config configs/tinystories.yaml
+
 # Resume training
 python train.py --config configs/automotive.yaml --resume checkpoints/latest.pt
+
+# Interactive testing
+python validate.py --checkpoint checkpoints/tinystories_torch_validation/best.pt \
+    --config configs/tinystories.yaml --chat
 ```
 
 ---
@@ -191,63 +212,69 @@ print(f"Vocab size: {len(tokenizer)}")  # 32768
 
 ---
 
-## Phase 3: Model Architecture (Day 2)
+## Phase 3: Model Architecture (Day 2) ✅ COMPLETE
 
-### 3.1 Define a minimal transformer
+### 3.1 Implemented: TorchTransformer
 
-Target ~25-30M parameters:
+Full PyTorch transformer in `models/TorchTransformer.py`:
 
-| Component | Dimension |
-|-----------|-----------|
-| Layers | 6 |
-| Embedding dim | 512 |
-| Heads | 8 |
-| FFN hidden | 2048 |
-| Context length | 1024 |
-| Vocab size | 32768 |
+| Component | Implementation |
+|-----------|----------------|
+| Normalization | RMSNorm (pre-norm) |
+| Position encoding | RoPE (Rotary Position Embeddings) |
+| Attention | Causal, GQA-ready (n_kv_heads configurable) |
+| FFN | SwiGLU activation |
+| Output | Weight-tied with embeddings |
 
-This gives you roughly 25-30M parameters (larger vocab = more embedding params). Adjust layers or embedding dim to hit your target.
+### 3.2 Model Configurations
 
-### 3.2 Implementation checklist
+| Config | d_model | Blocks | Heads | FFN | Context | Params |
+|--------|---------|--------|-------|-----|---------|--------|
+| TinyStories | 256 | 6 | 4 | 1024 | 256 | 5.8M |
+| Automotive | 384 | 6 | 6 | 1536 | 1024 | 23.6M |
+| Food | 512 | 6 | 8 | 2048 | 1024 | 36M |
 
-- [ ] Token embedding + learned positional embedding
-- [ ] Transformer blocks (pre-norm, RMSNorm or LayerNorm)
-- [ ] Causal attention mask
-- [ ] Output projection (weight-tie with embedding)
-- [ ] No dropout for now (simpler, and you're not overfitting at this scale)
+### 3.3 Implementation checklist
+
+- [x] Token embedding + RoPE positional encoding
+- [x] Transformer blocks (pre-norm with RMSNorm)
+- [x] Causal attention mask
+- [x] Output projection (weight-tied with embedding)
+- [x] SwiGLU FFN
+- [x] bfloat16 support
 
 ---
 
-## Phase 4: Training Infrastructure (Day 2-3)
+## Phase 4: Training Infrastructure (Day 2-3) ✅ COMPLETE
 
-### 4.1 Data loader
+### 4.1 Data loading
 
-Stream chunks from your jsonl files. Pack sequences to context length (512) with `<eos>` separators. Don't waste compute on padding.
+Two modes supported:
+- **Pre-tokenized corpora:** `corpus_dir` in config → instant loading from cache
+- **HuggingFace datasets:** `dataset` in config → loads from registry with caching
 
-### 4.2 Training loop essentials
+### 4.2 Training loop
 
-```python
-optimizer = AdamW(
-    model.parameters(), 
-    lr=3e-4, 
-    betas=(0.9, 0.95), 
-    weight_decay=0.1
-)
-```
-
-- **Warmup:** 500-1000 steps linear warmup
-- **Schedule:** Cosine decay to 10% of peak LR
-- **Batch size:** Start with 32-64 sequences, increase if VRAM allows
-- **Gradient clipping:** 1.0
+Implemented in `train.py`:
+- AdamW optimizer (lr=3e-4, betas=(0.9, 0.95), weight_decay=0.01)
+- Cosine LR decay with 5% warmup
+- Gradient clipping (max_norm=1.0)
+- bfloat16 mixed precision (no GradScaler needed)
+- Time-based checkpointing (every 15 min)
+- Epoch-end full evaluation with best model tracking
 
 ### 4.3 Logging
 
-Track per-step:
-- Training loss
-- Validation loss (both corpora)
-- Learning rate
+- **Console:** tqdm progress bar with loss, lr, tok/s
+- **File:** Clean log file (`logs/{experiment_name}.log`) with timestamps
+- Periodic validation with perplexity
 
-Log every 50-100 steps. Use wandb or just write to CSV.
+### 4.4 Validation script
+
+`validate.py` for interactive model testing:
+```bash
+python validate.py --checkpoint checkpoints/best.pt --config configs/tinystories.yaml --chat
+```
 
 ---
 
@@ -638,9 +665,89 @@ def plot_forgetting_by_type(eval_history: list[dict], save_path: str):
 
 ---
 
-## Phase 6: Run the Experiment (Day 4)
+## Phase 6: Continual Learning Baselines (Day 4)
 
-### 6.1 Baseline training
+### 6.0 The Three Baselines
+
+To measure forgetting, we need three baselines for comparison:
+
+| Baseline | Training Order | Evaluation |
+|----------|---------------|------------|
+| **Sequential A→B** | Train(A) → Train(B) | Eval(A), Eval(B) |
+| **Sequential B→A** | Train(B) → Train(A) | Eval(A), Eval(B) |
+| **Combined** | Train(A+B) together | Eval(A), Eval(B) |
+
+**Key insight:** The Combined baseline gives us the ceiling - what's achievable when the model sees all data. Sequential baselines show what happens when data arrives in sequence (the continual learning scenario).
+
+### 6.1 Baseline A→B: Sequential (Automotive first)
+
+```bash
+# Step 1: Train on Automotive until convergence
+python train.py --config configs/automotive.yaml
+# Checkpoint: checkpoints/automotive_baseline/best.pt
+# Record: ppl_A_baseline, ppl_B_baseline
+
+# Step 2: Continue training on Food (from automotive checkpoint)
+python train.py --config configs/food.yaml --resume checkpoints/automotive_baseline/best.pt
+# Checkpoint: checkpoints/automotive_then_food/best.pt
+# Record: ppl_A_after, ppl_B_after
+```
+
+### 6.2 Baseline B→A: Sequential (Food first)
+
+```bash
+# Step 1: Train on Food until convergence
+python train.py --config configs/food.yaml
+# Checkpoint: checkpoints/food_baseline/best.pt
+
+# Step 2: Continue training on Automotive (from food checkpoint)
+python train.py --config configs/automotive.yaml --resume checkpoints/food_baseline/best.pt
+# Checkpoint: checkpoints/food_then_automotive/best.pt
+```
+
+### 6.3 Baseline Combined: Joint Training
+
+Need a new config that interleaves both corpora:
+
+```yaml
+# configs/combined.yaml
+data:
+  corpus_dirs:
+    - "data/corpus_automotive"
+    - "data/corpus_food"
+  # Interleave batches from both
+```
+
+**Alternative:** Create combined pre-tokenized dataset offline.
+
+### 6.4 Metrics to Compare
+
+| Metric | A→B | B→A | Combined |
+|--------|-----|-----|----------|
+| Final ppl_A | ? | ? | ? |
+| Final ppl_B | ? | ? | ? |
+| QA accuracy (A) | ? | ? | ? |
+| QA accuracy (B) | ? | ? | ? |
+
+**Forgetting = Sequential - Combined** (how much worse is sequential?)
+
+### 6.5 Track the forgetting curve
+
+**Critical:** Don't just measure endpoints. During phase 2 of sequential training, periodically evaluate on the first corpus:
+
+```python
+# Every eval_every steps on Corpus B:
+# - Compute ppl_A (should increase = forgetting)
+# - Compute ppl_B (should decrease = learning)
+# - QA accuracy on corpus A tests (should decrease)
+```
+
+Plot these over training steps to answer:
+- How fast does the model forget?
+- Is it gradual or a cliff?
+- Does QA accuracy degrade faster/slower than perplexity?
+
+### 6.6 Original baseline training (kept for reference)
 
 1. Train on Corpus A until validation loss plateaus (~2-3 hours)
 2. Save checkpoint: `model_a_baseline.pt`
@@ -648,27 +755,6 @@ def plot_forgetting_by_type(eval_history: list[dict], save_path: str):
    - `ppl_A_baseline`
    - `qa_accuracy_baseline`
    - `qa_answer_ppl_baseline`
-
-### 6.2 Measure forgetting
-
-1. Load `model_a_baseline.pt`
-2. Continue training on Corpus B until validation loss plateaus
-3. Save checkpoint: `model_a_then_b.pt`
-4. Re-evaluate all metrics on Corpus A:
-   - `ppl_A_after`
-   - `qa_accuracy_after`
-   - `qa_answer_ppl_after`
-
-### 6.3 Track the forgetting curve
-
-**Critical:** Don't just measure endpoints. Every N steps on Corpus B, evaluate:
-- `ppl_A`
-- `qa_accuracy`
-
-Plot these over training steps. You want to see:
-- How fast does the model forget?
-- Is it gradual or a cliff?
-- Does QA accuracy degrade faster/slower than perplexity?
 
 ---
 
