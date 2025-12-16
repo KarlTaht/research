@@ -32,6 +32,8 @@ from tqdm import tqdm
 import argparse
 import time
 import logging
+from typing import List, Dict
+from functools import partial
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -40,6 +42,41 @@ from models import TorchTransformer, create_model
 from common.data import get_models_dir, load_training_data, get_dataset_config
 from common.training import CheckpointManager
 from common.utils import TrainingLogger, estimate_flops_per_step, format_flops
+
+
+def dynamic_pad_collate(batch: List[Dict], pad_token_id: int) -> Dict:
+    """Collate function that pads to max length in batch, not fixed length.
+
+    Finds the last non-pad token in each sequence and trims all sequences
+    to the longest actual content length in the batch. This reduces wasted
+    compute on padding tokens.
+
+    Args:
+        batch: List of dicts with 'input_ids' and 'labels' tensors
+        pad_token_id: Token ID used for padding
+
+    Returns:
+        Dict with 'input_ids' and 'labels' tensors trimmed to max-in-batch length
+    """
+    # Find actual lengths (position of last non-pad token + 1)
+    lengths = []
+    for item in batch:
+        input_ids = item['input_ids']
+        # Find last non-pad position
+        non_pad_mask = input_ids != pad_token_id
+        if non_pad_mask.any():
+            last_non_pad = non_pad_mask.nonzero()[-1].item() + 1
+        else:
+            last_non_pad = 1  # At least 1 token
+        lengths.append(last_non_pad)
+
+    max_len = max(lengths)
+
+    # Trim sequences to max_len
+    input_ids = torch.stack([item['input_ids'][:max_len] for item in batch])
+    labels = torch.stack([item['labels'][:max_len] for item in batch])
+
+    return {'input_ids': input_ids, 'labels': labels}
 
 
 def setup_file_logger(log_path: Path) -> logging.Logger:
@@ -145,12 +182,18 @@ def load_pretokenized_data(
         print(f"  Using subset: {len(train_dataset):,} examples")
 
     train_dataset.set_format(type='torch', columns=['input_ids', 'labels'])
+
+    # Custom collate to pad to max-in-batch (reduces wasted compute on padding)
+    collate_fn = partial(dynamic_pad_collate, pad_token_id=tokenizer.pad_token_id)
+    print(f"  Using dynamic padding (pad to max-in-batch)")
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=0,
         pin_memory=True,
+        collate_fn=collate_fn,
     )
 
     # Load validation
@@ -166,6 +209,7 @@ def load_pretokenized_data(
             shuffle=False,
             num_workers=0,
             pin_memory=True,
+            collate_fn=collate_fn,
         )
 
     return train_loader, val_loader, tokenizer
@@ -344,6 +388,7 @@ def main():
     start_epoch = 0
     global_step = 0
     best_val_loss = float('inf')
+    total_tokens_processed = 0  # Track total tokens for logging
 
     if args.resume:
         resume_path = args.resume if args.resume != 'latest' else None
@@ -472,6 +517,7 @@ def main():
                     avg_loss = accumulated_loss / gradient_accumulation_steps
                     accumulation_time = time.time() - accumulation_start_time
                     tokens_per_second = accumulated_tokens / accumulation_time
+                    total_tokens_processed += accumulated_tokens
 
                     global_step += 1
                     epoch_losses.append(avg_loss)
@@ -480,25 +526,30 @@ def main():
                                     approximate_tflops=tflops_per_step, tokens_per_second=tokens_per_second,
                                     batch_time_ms=accumulation_time * 1000)
 
-                    progress_bar.set_postfix({'loss': f"{avg_loss:.4f}", 'lr': f"{learning_rate:.2e}",
-                                              'ktok/s': f"{tokens_per_second / 1e3:.3f}"})
+                    progress_bar.set_postfix({
+                        'loss': f"{avg_loss:.4f}",
+                        'lr': f"{learning_rate:.2e}",
+                        'ktok/s': f"{tokens_per_second / 1e3:.1f}",
+                        'Mtok': f"{total_tokens_processed / 1e6:.1f}",
+                    })
 
                     # Time-based checkpoint
                     if time.time() - last_checkpoint_time >= checkpoint_interval_seconds:
                         avg_recent_loss = sum(epoch_losses[-100:]) / min(100, len(epoch_losses))
                         checkpoint_manager.save_checkpoint(epoch=epoch + 1, global_step=global_step,
                             train_config=config['training'], learning_rate=learning_rate,
-                            metrics={'train_loss': avg_recent_loss}, is_best=False)
+                            metrics={'train_loss': avg_recent_loss, 'total_tokens': total_tokens_processed},
+                            is_best=False)
                         elapsed_min = (time.time() - last_checkpoint_time) / 60
-                        print(f"\n  [Checkpoint] Saved at step {global_step} (loss={avg_recent_loss:.4f}, {elapsed_min:.1f}min elapsed)")
-                        file_logger.info(f"Time checkpoint: step={global_step}, loss={avg_recent_loss:.4f}")
+                        print(f"\n  [Checkpoint] step={global_step}, loss={avg_recent_loss:.4f}, tokens={total_tokens_processed/1e6:.1f}M")
+                        file_logger.info(f"Time checkpoint: step={global_step}, loss={avg_recent_loss:.4f}, tokens={total_tokens_processed/1e6:.1f}M")
                         last_checkpoint_time = time.time()
 
                     # Periodic evaluation
                     if global_step % eval_every == 0 and val_loader:
                         val_metrics = evaluate(model, val_loader, device, tokenizer=tokenizer, max_batches=50)
-                        print(f"\n  Step {global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}")
-                        file_logger.info(f"Eval step={global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}")
+                        print(f"\n  Step {global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}, tokens={total_tokens_processed/1e6:.1f}M")
+                        file_logger.info(f"Eval step={global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}, tokens={total_tokens_processed/1e6:.1f}M")
 
                     # Reset accumulators (timer resets at start of next window)
                     accumulated_loss = 0.0
@@ -556,10 +607,12 @@ def main():
 
                 # Metrics
                 batch_time_ms = (time.time() - step_start_time) * 1000
-                tokens_per_second = input_ids.numel() / (batch_time_ms / 1000)
+                batch_tokens = input_ids.numel()
+                tokens_per_second = batch_tokens / (batch_time_ms / 1000)
+                total_tokens_processed += batch_tokens
 
                 if global_step < 3:
-                    print(f"\n  DEBUG step {global_step}: tokens={input_ids.numel()}, time={batch_time_ms:.1f}ms, tok/s={tokens_per_second:.0f}")
+                    print(f"\n  DEBUG step {global_step}: tokens={batch_tokens}, time={batch_time_ms:.1f}ms, tok/s={tokens_per_second:.0f}")
 
                 global_step += 1
                 epoch_losses.append(loss.item())
@@ -568,25 +621,30 @@ def main():
                                 approximate_tflops=tflops_per_step, tokens_per_second=tokens_per_second,
                                 batch_time_ms=batch_time_ms)
 
-                progress_bar.set_postfix({'loss': f"{loss.item():.4f}", 'lr': f"{learning_rate:.2e}",
-                                          'mtok/s': f"{tokens_per_second / 1e6:.2f}"})
+                progress_bar.set_postfix({
+                    'loss': f"{loss.item():.4f}",
+                    'lr': f"{learning_rate:.2e}",
+                    'ktok/s': f"{tokens_per_second / 1e3:.1f}",
+                    'Mtok': f"{total_tokens_processed / 1e6:.1f}",
+                })
 
                 # Time-based checkpoint
                 if time.time() - last_checkpoint_time >= checkpoint_interval_seconds:
                     avg_recent_loss = sum(epoch_losses[-100:]) / min(100, len(epoch_losses))
                     checkpoint_manager.save_checkpoint(epoch=epoch + 1, global_step=global_step,
                         train_config=config['training'], learning_rate=learning_rate,
-                        metrics={'train_loss': avg_recent_loss}, is_best=False)
+                        metrics={'train_loss': avg_recent_loss, 'total_tokens': total_tokens_processed},
+                        is_best=False)
                     elapsed_min = (time.time() - last_checkpoint_time) / 60
-                    print(f"\n  [Checkpoint] Saved at step {global_step} (loss={avg_recent_loss:.4f}, {elapsed_min:.1f}min elapsed)")
-                    file_logger.info(f"Time checkpoint: step={global_step}, loss={avg_recent_loss:.4f}")
+                    print(f"\n  [Checkpoint] step={global_step}, loss={avg_recent_loss:.4f}, tokens={total_tokens_processed/1e6:.1f}M")
+                    file_logger.info(f"Time checkpoint: step={global_step}, loss={avg_recent_loss:.4f}, tokens={total_tokens_processed/1e6:.1f}M")
                     last_checkpoint_time = time.time()
 
                 # Periodic evaluation
                 if global_step % eval_every == 0 and val_loader:
                     val_metrics = evaluate(model, val_loader, device, tokenizer=tokenizer, max_batches=50)
-                    print(f"\n  Step {global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}")
-                    file_logger.info(f"Eval step={global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}")
+                    print(f"\n  Step {global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}, tokens={total_tokens_processed/1e6:.1f}M")
+                    file_logger.info(f"Eval step={global_step}: val_loss={val_metrics['loss']:.4f}, val_ppl={val_metrics['perplexity']:.2f}, tokens={total_tokens_processed/1e6:.1f}M")
 
         # End of epoch
         epoch_time = time.time() - epoch_start_time
@@ -594,7 +652,8 @@ def main():
 
         print(f"\nEpoch {epoch + 1} complete in {epoch_time:.1f}s")
         print(f"  Train loss: {train_loss:.4f}")
-        file_logger.info(f"Epoch {epoch + 1} complete: time={epoch_time:.1f}s, train_loss={train_loss:.4f}")
+        print(f"  Tokens processed: {total_tokens_processed/1e6:.1f}M")
+        file_logger.info(f"Epoch {epoch + 1} complete: time={epoch_time:.1f}s, train_loss={train_loss:.4f}, tokens={total_tokens_processed/1e6:.1f}M")
 
         # Full evaluation at end of epoch
         if val_loader:
@@ -630,6 +689,7 @@ def main():
                     'train_loss': train_loss,
                     'val_loss': val_loss,
                     'val_perplexity': val_perplexity,
+                    'total_tokens': total_tokens_processed,
                 },
                 is_best=is_best,
             )
@@ -643,11 +703,12 @@ def main():
     print("TRAINING COMPLETE")
     print("="*50)
     print(f"  Total steps: {global_step}")
+    print(f"  Total tokens: {total_tokens_processed/1e6:.1f}M")
     print(f"  Best val loss: {best_val_loss:.4f}")
     print(f"  Checkpoints saved to: {checkpoint_dir}")
     print("="*50)
 
-    file_logger.info(f"Training complete: total_steps={global_step}, best_val_loss={best_val_loss:.4f}")
+    file_logger.info(f"Training complete: total_steps={global_step}, total_tokens={total_tokens_processed/1e6:.1f}M, best_val_loss={best_val_loss:.4f}")
     file_logger.info(f"Checkpoints saved to: {checkpoint_dir}")
 
 

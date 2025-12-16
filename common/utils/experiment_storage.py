@@ -37,7 +37,7 @@ from datetime import datetime
 
 def get_experiments_dir() -> Path:
     """Get the default experiments directory."""
-    from common.data.hf_utils import get_default_assets_dir
+    from common.data import get_default_assets_dir
 
     experiments_dir = get_default_assets_dir() / "outputs" / "experiments"
     experiments_dir.mkdir(parents=True, exist_ok=True)

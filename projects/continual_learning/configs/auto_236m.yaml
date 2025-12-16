@@ -25,7 +25,7 @@ training:
   lr_decay: cosine
   warmup_ratio: 0.05
   weight_decay: 0.01
-  num_epochs: 3
+  num_epochs: 10
 
   log_every: 100
   eval_every: 500
