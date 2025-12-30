@@ -1,0 +1,141 @@
+# Transformer grokking sweep: learning rate × weight decay × problem size
+# 18 runs (9 hyperparameter combos × 2 problem sizes), 100k epochs each
+# Goal: Find reliable grokking hyperparameters across problem scales
+
+base:
+  # Data
+  operation: "add"
+  train_frac: 0.5
+  data_seed: 42
+
+  # Model
+  model_type: "transformer"
+  hidden_dim: 128
+  n_layers: 2
+  n_heads: 4
+
+  # Training
+  epochs: 100000
+  optimizer: "adamw"
+  beta1: 0.9
+  beta2: 0.98  # Lower than default 0.999 for faster adaptation
+  eps: 1.0e-8
+  grad_clip: 1.0
+  warmup_epochs: 500
+
+  # No routing regularization
+  routing_regularizer: null
+  lambda_routing: 0.0
+  lambda_spectral: 0.0
+
+  # Logging
+  log_every: 100
+  save_routing_every: 1000
+  checkpoint_every: 10000
+
+  seed: 42
+
+experiments:
+  # ═══════════════════════════════════════════════════════════════
+  # p=17 (smaller problem, faster grokking expected)
+  # ═══════════════════════════════════════════════════════════════
+
+  # Low learning rate
+  - name: "p17_lr3e-4_wd0.5"
+    p: 17
+    lr: 0.0003
+    weight_decay: 0.5
+
+  - name: "p17_lr3e-4_wd1.0"
+    p: 17
+    lr: 0.0003
+    weight_decay: 1.0
+
+  - name: "p17_lr3e-4_wd2.0"
+    p: 17
+    lr: 0.0003
+    weight_decay: 2.0
+
+  # Medium learning rate
+  - name: "p17_lr1e-3_wd0.5"
+    p: 17
+    lr: 0.001
+    weight_decay: 0.5
+
+  - name: "p17_lr1e-3_wd1.0"
+    p: 17
+    lr: 0.001
+    weight_decay: 1.0
+
+  - name: "p17_lr1e-3_wd2.0"
+    p: 17
+    lr: 0.001
+    weight_decay: 2.0
+
+  # High learning rate
+  - name: "p17_lr3e-3_wd0.5"
+    p: 17
+    lr: 0.003
+    weight_decay: 0.5
+
+  - name: "p17_lr3e-3_wd1.0"
+    p: 17
+    lr: 0.003
+    weight_decay: 1.0
+
+  - name: "p17_lr3e-3_wd2.0"
+    p: 17
+    lr: 0.003
+    weight_decay: 2.0
+
+  # ═══════════════════════════════════════════════════════════════
+  # p=113 (larger problem, slower grokking expected)
+  # ═══════════════════════════════════════════════════════════════
+
+  # Low learning rate
+  - name: "p113_lr3e-4_wd0.5"
+    p: 113
+    lr: 0.0003
+    weight_decay: 0.5
+
+  - name: "p113_lr3e-4_wd1.0"
+    p: 113
+    lr: 0.0003
+    weight_decay: 1.0
+
+  - name: "p113_lr3e-4_wd2.0"
+    p: 113
+    lr: 0.0003
+    weight_decay: 2.0
+
+  # Medium learning rate
+  - name: "p113_lr1e-3_wd0.5"
+    p: 113
+    lr: 0.001
+    weight_decay: 0.5
+
+  - name: "p113_lr1e-3_wd1.0"
+    p: 113
+    lr: 0.001
+    weight_decay: 1.0
+
+  - name: "p113_lr1e-3_wd2.0"
+    p: 113
+    lr: 0.001
+    weight_decay: 2.0
+
+  # High learning rate
+  - name: "p113_lr3e-3_wd0.5"
+    p: 113
+    lr: 0.003
+    weight_decay: 0.5
+
+  - name: "p113_lr3e-3_wd1.0"
+    p: 113
+    lr: 0.003
+    weight_decay: 1.0
+
+  - name: "p113_lr3e-3_wd2.0"
+    p: 113
+    lr: 0.003
+    weight_decay: 2.0

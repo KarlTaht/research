@@ -27,7 +27,7 @@ def parse_args():
 
     # Model arguments
     parser.add_argument("--model-type", type=str, default="routed",
-                        choices=["baseline", "routed", "single_head"])
+                        choices=["baseline", "routed", "single_head", "transformer"])
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--n-layers", type=int, default=4)
     parser.add_argument("--n-heads", type=int, default=4)
@@ -36,6 +36,11 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=50000)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=0.1)
+    parser.add_argument("--beta1", type=float, default=0.9)
+    parser.add_argument("--beta2", type=float, default=0.98)
+    parser.add_argument("--eps", type=float, default=1e-8)
+    parser.add_argument("--warmup-epochs", type=int, default=0,
+                        help="Linear LR warmup epochs")
     parser.add_argument("--resume", action="store_true",
                         help="Resume training from last checkpoint")
     parser.add_argument("--extra-epochs", type=int, default=0,
@@ -88,6 +93,10 @@ def main():
         "epochs": args.epochs,
         "lr": args.lr,
         "weight_decay": args.weight_decay,
+        "beta1": args.beta1,
+        "beta2": args.beta2,
+        "eps": args.eps,
+        "warmup_epochs": args.warmup_epochs,
         "routing_regularizer": args.routing_reg if args.routing_reg != "none" else None,
         "lambda_routing": args.lambda_routing,
         "lambda_spectral": args.lambda_spectral,

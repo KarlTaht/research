@@ -14,11 +14,15 @@ n_layers: 2      # 2 transformer blocks
 n_heads: 4       # 4 attention heads (32 dims per head)
 
 # Training
-epochs: 100000
-lr: 0.0003
-weight_decay: 1.0  # Higher weight decay for grokking
+epochs: 20000
+lr: 0.001
+weight_decay: 1.5  # Higher weight decay for grokking
 optimizer: "adamw"
+beta1: 0.9
+beta2: 0.98  # Lower than default 0.999 for faster adaptation
+eps: 1.0e-8
 grad_clip: 1.0     # Gradient clipping for stable training
+warmup_epochs: 500  # Linear warmup to stabilize early training
 
 # No routing regularization for transformer
 routing_regularizer: null

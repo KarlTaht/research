@@ -48,6 +48,24 @@ class BaselineMLP(nn.Module):
         """Forward pass returning logits."""
         return self.net(x)
 
+    def get_representation(self, x: Tensor) -> Tensor:
+        """
+        Get the final representation before the output layer.
+
+        For BaselineMLP, this is the hidden state after all hidden layers
+        but before the final Linear projection to logits.
+
+        Args:
+            x: Input tensor [batch, input_dim]
+
+        Returns:
+            representation: Final hidden state [batch, hidden_dim]
+        """
+        # Apply all layers except the last (output) layer
+        for layer in list(self.net)[:-1]:
+            x = layer(x)
+        return x
+
     def count_parameters(self) -> int:
         """Count trainable parameters."""
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -135,6 +153,31 @@ class RoutedNetwork(nn.Module):
         )
 
         return logits, metrics
+
+    def get_representation(self, x: Tensor) -> Tensor:
+        """
+        Get the final representation before the output layer.
+
+        For RoutedNetwork, this is the hidden state after all routed layers
+        but before the output head projection.
+
+        Args:
+            x: Input tensor [batch, input_dim]
+
+        Returns:
+            representation: Final hidden state [batch, hidden_dim]
+        """
+        # Embed input
+        h = self.embed(x)
+
+        # Initialize routing state from embedded input
+        routing_state = self.state_init(h)
+
+        # Pass through routed layers
+        for layer in self.layers:
+            h, routing_state, _ = layer(h, routing_state)
+
+        return h
 
     def forward_with_routing_trace(
         self,
@@ -306,6 +349,85 @@ class GrokTransformer(nn.Module):
         logits = self.output_head(last_hidden)  # [batch, output_dim]
 
         return logits
+
+    def get_representation(self, input_ids: Tensor) -> Tensor:
+        """
+        Get the final representation before unembedding.
+
+        This is the hidden state after all transformer blocks and final LayerNorm,
+        at the last sequence position. This representation captures what the model
+        has computed, before projecting to logits.
+
+        Args:
+            input_ids: Token IDs [batch, seq_len]
+
+        Returns:
+            representation: Final hidden state [batch, d_model]
+        """
+        batch_size, seq_len = input_ids.shape
+
+        # Embeddings
+        positions = torch.arange(seq_len, device=input_ids.device)
+        x = self.token_embedding(input_ids) + self.pos_embedding(positions)
+
+        # Causal mask for this sequence length
+        mask = self.causal_mask[:seq_len, :seq_len]
+
+        # Transformer blocks
+        for block in self.blocks:
+            x = block(x, mask)
+
+        # Final layer norm
+        x = self.ln_f(x)
+
+        # Return representation at last position (before unembedding)
+        return x[:, -1, :]  # [batch, d_model]
+
+    def forward_from_embeddings(self, embeddings: Tensor) -> Tensor:
+        """
+        Forward pass starting from embeddings (for gradient computation).
+
+        This allows computing Jacobian/Hessian with respect to the continuous
+        embedding space rather than discrete token IDs.
+
+        Args:
+            embeddings: Embedded inputs [batch, seq_len, d_model]
+
+        Returns:
+            logits: Prediction logits at last position [batch, output_dim]
+        """
+        seq_len = embeddings.shape[1]
+
+        # Causal mask for this sequence length
+        mask = self.causal_mask[:seq_len, :seq_len]
+
+        # Transformer blocks
+        x = embeddings
+        for block in self.blocks:
+            x = block(x, mask)
+
+        # Final layer norm
+        x = self.ln_f(x)
+
+        # Get logits from last position only
+        last_hidden = x[:, -1, :]  # [batch, d_model]
+        logits = self.output_head(last_hidden)  # [batch, output_dim]
+
+        return logits
+
+    def get_embeddings(self, input_ids: Tensor) -> Tensor:
+        """
+        Get token + position embeddings for input IDs.
+
+        Args:
+            input_ids: Token IDs [batch, seq_len]
+
+        Returns:
+            embeddings: [batch, seq_len, d_model]
+        """
+        seq_len = input_ids.shape[1]
+        positions = torch.arange(seq_len, device=input_ids.device)
+        return self.token_embedding(input_ids) + self.pos_embedding(positions)
 
     def count_parameters(self) -> int:
         """Count trainable parameters."""

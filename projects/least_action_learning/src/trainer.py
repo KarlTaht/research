@@ -11,12 +11,18 @@ import json
 
 from .data import ModularArithmeticDataset, SequenceArithmeticDataset
 from .models import BaselineMLP, RoutedNetwork, GrokTransformer, create_model
-from .losses import LeastActionLoss, spectral_smoothness
+from .losses import (
+    LeastActionLoss,
+    spectral_smoothness,
+    compute_jacobian_norm,
+    compute_hessian_trace,
+)
 from .metrics import (
     TrainingMetrics,
     MetricsHistory,
     compute_layer_weight_norms,
     compute_total_weight_norm,
+    compute_representation_norm,
 )
 
 
@@ -41,7 +47,11 @@ class TrainerConfig:
     lr: float = 1e-3
     weight_decay: float = 0.1
     optimizer: str = "adamw"
+    beta1: float = 0.9  # AdamW first moment decay
+    beta2: float = 0.98  # AdamW second moment decay (0.98 more stable than 0.999)
+    eps: float = 1e-8  # AdamW epsilon
     grad_clip: Optional[float] = None  # Max gradient norm (None = no clipping)
+    warmup_epochs: int = 0  # Linear warmup from 0 to lr over this many epochs
 
     # Loss / regularization
     routing_regularizer: Optional[str] = "entropy"
@@ -58,6 +68,16 @@ class TrainerConfig:
     # Experiment
     name: str = ""
     seed: int = 42
+
+    def __post_init__(self):
+        """Convert string values to proper types (handles YAML quirks)."""
+        # Float fields that YAML might parse as strings
+        float_fields = ['lr', 'weight_decay', 'beta1', 'beta2', 'eps',
+                        'train_frac', 'lambda_routing', 'lambda_spectral']
+        for field in float_fields:
+            val = getattr(self, field)
+            if isinstance(val, str):
+                setattr(self, field, float(val))
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -161,12 +181,40 @@ class Trainer:
         return torch.device("cpu")
 
     def _create_optimizer(self) -> optim.Optimizer:
-        """Create optimizer based on config."""
+        """Create optimizer based on config.
+
+        For AdamW, uses separate parameter groups to exclude embeddings,
+        biases, and LayerNorm from weight decay (standard practice).
+        """
         if self.config.optimizer == "adamw":
+            # Separate parameters into decay and no-decay groups
+            decay_params = []
+            no_decay_params = []
+
+            for name, param in self.model.named_parameters():
+                if not param.requires_grad:
+                    continue
+                # No weight decay for: biases, LayerNorm, embeddings
+                if (
+                    'bias' in name
+                    or 'ln' in name.lower()
+                    or 'layernorm' in name.lower()
+                    or 'embedding' in name
+                ):
+                    no_decay_params.append(param)
+                else:
+                    decay_params.append(param)
+
+            param_groups = [
+                {'params': decay_params, 'weight_decay': self.config.weight_decay},
+                {'params': no_decay_params, 'weight_decay': 0.0},
+            ]
+
             return optim.AdamW(
-                self.model.parameters(),
+                param_groups,
                 lr=self.config.lr,
-                weight_decay=self.config.weight_decay,
+                betas=(self.config.beta1, self.config.beta2),
+                eps=self.config.eps,
             )
         elif self.config.optimizer == "adam":
             return optim.Adam(
@@ -289,6 +337,16 @@ class Trainer:
         print()
 
         for epoch in range(start_epoch, self.config.epochs):
+            # Learning rate warmup
+            if self.config.warmup_epochs > 0 and epoch < self.config.warmup_epochs:
+                warmup_factor = (epoch + 1) / self.config.warmup_epochs
+                for param_group in self.optimizer.param_groups:
+                    param_group['lr'] = self.config.lr * warmup_factor
+            elif epoch == self.config.warmup_epochs and self.config.warmup_epochs > 0:
+                # Restore full learning rate after warmup
+                for param_group in self.optimizer.param_groups:
+                    param_group['lr'] = self.config.lr
+
             # Training step
             train_loss, train_acc, routing_weights = self.train_step(epoch)
 
@@ -307,15 +365,33 @@ class Trainer:
                     routing_entropy = 0.0
                     head_util = []
 
-                # Spectral smoothness (periodic)
-                if epoch % (self.config.log_every * 10) == 0:
-                    smoothness = self.compute_spectral_smoothness()
-                else:
-                    smoothness = None
+                # Spectral smoothness (every log_every epochs)
+                smoothness = self.compute_spectral_smoothness()
+
+                # Curvature metrics (every log_every epochs)
+                # Sample subset for efficiency
+                sample_size = min(256, len(self.test_inputs))
+                sample_indices = torch.randperm(len(self.test_inputs))[:sample_size]
+                sample_inputs = self.test_inputs[sample_indices]
+
+                # Compute Jacobian/Hessian w.r.t. embeddings for transformers
+                jac_norm = compute_jacobian_norm(
+                    self.model, sample_inputs,
+                    num_samples=10,
+                    is_transformer=self.is_transformer,
+                )
+                hess_trace = compute_hessian_trace(
+                    self.model, sample_inputs,
+                    num_hutchinson_samples=5,
+                    is_transformer=self.is_transformer,
+                )
 
                 # Weight norms
                 layer_norms = compute_layer_weight_norms(self.model)
                 total_norm = compute_total_weight_norm(self.model)
+
+                # Representation norm (hidden state before unembedding)
+                repr_norm = compute_representation_norm(self.model, self.test_inputs)
 
                 # Create metrics object
                 metrics = TrainingMetrics(
@@ -329,6 +405,9 @@ class Trainer:
                     spectral_smoothness=smoothness,
                     layer_weight_norms=layer_norms,
                     total_weight_norm=total_norm,
+                    representation_norm=repr_norm,
+                    jacobian_norm=jac_norm,
+                    hessian_trace=hess_trace,
                 )
 
                 # Log to history
@@ -350,15 +429,15 @@ class Trainer:
                     self.save_checkpoint("best.pt", epoch=epoch)
 
                 # Print progress
-                smoothness_str = f", smooth={smoothness:.3f}" if smoothness else ""
                 routing_str = f", entropy={routing_entropy:.3f}" if routing_weights else ""
-                norm_str = f", wnorm={total_norm:.1f}"
                 print(
                     f"Epoch {epoch:7d} | "
                     f"Train: {train_acc*100:5.1f}% | "
                     f"Test: {test_acc*100:5.1f}% | "
-                    f"Loss: {train_loss:.2e}"
-                    f"{norm_str}{routing_str}{smoothness_str}"
+                    f"Loss: {train_loss:.2e}, "
+                    f"rnorm={repr_norm:.1f}, smooth={smoothness:.3f}, "
+                    f"jac={jac_norm:.2e}, |hess|={abs(hess_trace):.2e}"
+                    f"{routing_str}"
                 )
 
                 # Callback

@@ -295,6 +295,208 @@ def spectral_smoothness_loss(
     return 1.0 - smoothness
 
 
+def compute_jacobian_norm(
+    model: nn.Module,
+    inputs: Tensor,
+    num_samples: int = 10,
+    is_transformer: bool = False,
+) -> float:
+    """
+    Compute mean squared Jacobian norm ‖∇ₓf(x)‖² via random projections.
+
+    This measures first-order smoothness: how sensitive the output is to
+    input perturbations. Lower values indicate smoother functions.
+
+    Uses random projection for efficiency: instead of computing full Jacobian,
+    compute E[‖J^T v‖²] for random v, which equals ‖J‖²_F / output_dim.
+
+    For transformers, computes Jacobian with respect to embeddings (continuous)
+    rather than token IDs (discrete).
+
+    Args:
+        model: Model to evaluate
+        inputs: Input tensor [batch, input_dim] for MLP, [batch, seq_len] for transformer
+        num_samples: Number of random projections for estimation
+        is_transformer: If True, compute w.r.t. embeddings
+
+    Returns:
+        Mean squared Jacobian Frobenius norm across batch
+    """
+    model.eval()
+
+    if is_transformer:
+        # For transformers, get embeddings and compute gradients w.r.t. them
+        with torch.no_grad():
+            embeddings = model.get_embeddings(inputs)
+        embeddings = embeddings.detach().requires_grad_(True)
+        logits = model.forward_from_embeddings(embeddings)
+        grad_input = embeddings
+    else:
+        inputs = inputs.detach().requires_grad_(True)
+        outputs = model(inputs)
+        if isinstance(outputs, tuple):
+            logits = outputs[0]
+        else:
+            logits = outputs
+        grad_input = inputs
+
+    batch_size, output_dim = logits.shape
+    total_jac_norm_sq = 0.0
+
+    for _ in range(num_samples):
+        # Random projection vector
+        v = torch.randn(batch_size, output_dim, device=logits.device)
+        v = v / v.norm(dim=-1, keepdim=True)
+
+        # Compute J^T v via backward pass
+        grads = torch.autograd.grad(
+            outputs=logits,
+            inputs=grad_input,
+            grad_outputs=v,
+            create_graph=False,
+            retain_graph=True,
+        )[0]
+
+        # ‖J^T v‖² for each sample in batch (flatten if needed)
+        grads_flat = grads.view(batch_size, -1)
+        jac_norm_sq = (grads_flat ** 2).sum(dim=-1)  # [batch]
+        total_jac_norm_sq += jac_norm_sq.mean().item()
+
+    model.train()
+    # Average over samples, scale by output_dim to get Frobenius norm
+    return (total_jac_norm_sq / num_samples) * output_dim
+
+
+def compute_hessian_trace(
+    model: nn.Module,
+    inputs: Tensor,
+    num_hutchinson_samples: int = 5,
+    is_transformer: bool = False,
+) -> float:
+    """
+    Compute Hessian trace via Hutchinson's stochastic trace estimator.
+
+    This measures second-order curvature: Tr(∇²ₓf(x)). Higher values
+    indicate more curved (less smooth) function landscapes.
+
+    Uses Hutchinson's trick: Tr(H) = E[v^T H v] for random v with E[vv^T] = I.
+
+    For transformers, computes Hessian with respect to embeddings.
+
+    Args:
+        model: Model to evaluate
+        inputs: Input tensor [batch, input_dim] for MLP, [batch, seq_len] for transformer
+        num_hutchinson_samples: Number of random vectors for trace estimation
+        is_transformer: If True, compute w.r.t. embeddings
+
+    Returns:
+        Mean Hessian trace across batch
+    """
+    model.eval()
+
+    if is_transformer:
+        # For transformers, get embeddings and compute gradients w.r.t. them
+        with torch.no_grad():
+            embeddings = model.get_embeddings(inputs)
+        grad_input = embeddings.detach().requires_grad_(True)
+        logits = model.forward_from_embeddings(grad_input)
+    else:
+        grad_input = inputs.detach().requires_grad_(True)
+        outputs = model(grad_input)
+        if isinstance(outputs, tuple):
+            logits = outputs[0]
+        else:
+            logits = outputs
+
+    batch_size = grad_input.shape[0]
+    total_trace = 0.0
+
+    for _ in range(num_hutchinson_samples):
+        # Random Rademacher vector (+1 or -1)
+        v = torch.randint(0, 2, grad_input.shape, device=grad_input.device).float() * 2 - 1
+
+        # First derivative: compute gradient of sum of logits w.r.t. inputs
+        # We use the predicted class logit for each sample
+        predicted_class = logits.argmax(dim=-1)
+        selected_logits = logits.gather(1, predicted_class.unsqueeze(1)).squeeze()
+
+        # Gradient
+        grads = torch.autograd.grad(
+            outputs=selected_logits.sum(),
+            inputs=grad_input,
+            create_graph=True,
+            retain_graph=True,
+        )[0]
+
+        # Second derivative: v^T H v = v^T ∇(∇f · v)
+        grad_v_product = (grads * v).sum()
+
+        # Compute gradient of (grad · v) w.r.t. inputs
+        hvp = torch.autograd.grad(
+            outputs=grad_v_product,
+            inputs=grad_input,
+            create_graph=False,
+            retain_graph=True,
+        )[0]
+
+        # v^T H v (flatten and sum)
+        v_flat = v.view(batch_size, -1)
+        hvp_flat = hvp.view(batch_size, -1)
+        trace_estimate = (v_flat * hvp_flat).sum(dim=-1)  # [batch]
+        total_trace += trace_estimate.mean().item()
+
+    model.train()
+    return total_trace / num_hutchinson_samples
+
+
+def jacobian_regularizer(
+    model: nn.Module,
+    inputs: Tensor,
+    num_samples: int = 1,
+) -> Tensor:
+    """
+    Differentiable Jacobian norm regularizer for training.
+
+    Penalizes ‖∇ₓf(x)‖² to encourage first-order smoothness.
+
+    Args:
+        model: Model to regularize
+        inputs: Input tensor
+        num_samples: Number of random projections
+
+    Returns:
+        Jacobian penalty tensor (differentiable)
+    """
+    outputs = model(inputs)
+    if isinstance(outputs, tuple):
+        logits = outputs[0]
+    else:
+        logits = outputs
+
+    batch_size, output_dim = logits.shape
+    total_penalty = 0.0
+
+    for _ in range(num_samples):
+        # Random projection
+        v = torch.randn(batch_size, output_dim, device=logits.device)
+        v = v / (v.norm(dim=-1, keepdim=True) + 1e-8)
+
+        # Compute J^T v
+        grads = torch.autograd.grad(
+            outputs=logits,
+            inputs=inputs,
+            grad_outputs=v,
+            create_graph=True,
+            retain_graph=True,
+        )[0]
+
+        # ‖J^T v‖²
+        penalty = (grads ** 2).sum(dim=-1).mean()
+        total_penalty = total_penalty + penalty
+
+    return (total_penalty / num_samples) * output_dim
+
+
 class LeastActionLoss(nn.Module):
     """
     Combined loss for least action learning.

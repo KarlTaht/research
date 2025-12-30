@@ -196,6 +196,33 @@ def compute_total_weight_norm(model: torch.nn.Module) -> float:
     return total_sq ** 0.5
 
 
+def compute_representation_norm(
+    model: torch.nn.Module,
+    inputs: torch.Tensor,
+) -> float:
+    """
+    Compute the mean L2 norm of representations before unembedding.
+
+    This measures the magnitude of the final hidden state (after all
+    transformer blocks / MLP layers, before the output projection).
+    This is more meaningful for analyzing grokking dynamics than
+    weight norms, as it captures how the model organizes its
+    internal representations.
+
+    Args:
+        model: The neural network model (must have get_representation method)
+        inputs: Input tensor (one-hot for MLP, token IDs for transformer)
+
+    Returns:
+        Mean L2 norm of representations across the batch
+    """
+    with torch.no_grad():
+        representations = model.get_representation(inputs)
+        # Compute L2 norm for each sample, then take mean
+        norms = representations.norm(2, dim=-1)  # [batch]
+        return norms.mean().item()
+
+
 @dataclass
 class TrainingMetrics:
     """Container for all training metrics at a given step."""
@@ -209,6 +236,9 @@ class TrainingMetrics:
     spectral_smoothness: Optional[float] = None
     layer_weight_norms: Optional[list[float]] = None
     total_weight_norm: Optional[float] = None
+    representation_norm: Optional[float] = None
+    jacobian_norm: Optional[float] = None
+    hessian_trace: Optional[float] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for logging."""
@@ -229,6 +259,12 @@ class TrainingMetrics:
                 d[f"layer_{i}_weight_norm"] = norm
         if self.total_weight_norm is not None:
             d["total_weight_norm"] = self.total_weight_norm
+        if self.representation_norm is not None:
+            d["representation_norm"] = self.representation_norm
+        if self.jacobian_norm is not None:
+            d["jacobian_norm"] = self.jacobian_norm
+        if self.hessian_trace is not None:
+            d["hessian_trace"] = self.hessian_trace
         return d
 
 
