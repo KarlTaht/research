@@ -1,0 +1,35 @@
+# Validation config: Transformer on small problem (p=17)
+# Use this to confirm transformer grokking works before running long experiments
+
+# Data
+p: 17
+operation: "add"
+train_frac: 0.5
+data_seed: 42
+
+# Model (matching original paper architecture)
+model_type: "transformer"
+hidden_dim: 128  # d_model
+n_layers: 2      # 2 transformer blocks
+n_heads: 4       # 4 attention heads (32 dims per head)
+
+# Training
+epochs: 100000
+lr: 0.0003
+weight_decay: 1.0  # Higher weight decay for grokking
+optimizer: "adamw"
+grad_clip: 1.0     # Gradient clipping for stable training
+
+# No routing regularization for transformer
+routing_regularizer: null
+lambda_routing: 0.0
+lambda_spectral: 0.0
+
+# Logging
+log_every: 100
+save_routing_every: 1000
+checkpoint_every: 5000
+
+# Experiment
+name: "validate_transformer_17_add"
+seed: 42

@@ -1,0 +1,35 @@
+# Validation config: Small problem (p=17) for quick grokking verification
+# Use this to confirm the training setup works before running long experiments
+# Expected: Grokking within ~5-10k epochs
+
+# Data
+p: 17
+operation: "add"
+train_frac: 0.5
+data_seed: 42
+
+# Model
+model_type: "baseline"
+hidden_dim: 128  # Smaller model for smaller problem
+n_layers: 2
+n_heads: 1  # Ignored for baseline
+
+# Training
+epochs: 100000
+lr: 0.001
+weight_decay: 2.0  # Higher weight decay crucial for grokking
+optimizer: "adamw"
+
+# No routing regularization for baseline
+routing_regularizer: null
+lambda_routing: 0.0
+lambda_spectral: 0.0
+
+# Logging
+log_every: 100
+save_routing_every: 1000
+checkpoint_every: 5000
+
+# Experiment
+name: "validate_17_add"
+seed: 42

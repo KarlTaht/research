@@ -1,0 +1,35 @@
+# Baseline A: Vanilla MLP (no gating)
+# Sanity check that task setup works and grokking occurs
+# Reference point for "normal" grokking dynamics
+
+# Data
+p: 113
+operation: "add"
+train_frac: 0.3
+data_seed: 42
+
+# Model
+model_type: "baseline"
+hidden_dim: 128
+n_layers: 4
+n_heads: 1  # Ignored for baseline
+
+# Training
+epochs: 50000
+lr: 0.001
+weight_decay: 0.1
+optimizer: "adamw"
+
+# No routing regularization for baseline
+routing_regularizer: null
+lambda_routing: 0.0
+lambda_spectral: 0.0
+
+# Logging
+log_every: 100
+save_routing_every: 1000
+checkpoint_every: 5000
+
+# Experiment
+name: "baseline_113_add"
+seed: 42

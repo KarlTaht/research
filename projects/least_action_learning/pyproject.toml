@@ -1,0 +1,31 @@
+[project]
+name = "least-action-learning"
+version = "0.1.0"
+description = "Efficient routing through neural networks via learned least action"
+requires-python = ">=3.10"
+
+dependencies = [
+    "torch>=2.0",
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "pyyaml",
+    "pyarrow",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "ruff",
+]
+visualizer = [
+    "gradio>=4.0",
+    "plotly>=5.0",
+]
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100

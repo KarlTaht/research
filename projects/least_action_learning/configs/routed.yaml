@@ -1,0 +1,37 @@
+# Experimental: Routed network WITH entropy regularization
+# Tests whether routing + efficiency pressure accelerates grokking
+# Compare against baseline.yaml and routed_no_reg.yaml
+
+# Data
+p: 113
+operation: "add"
+train_frac: 0.3
+data_seed: 42
+
+# Model
+model_type: "routed"
+hidden_dim: 128
+n_layers: 4
+n_heads: 4
+
+# Training
+epochs: 50000
+lr: 0.001
+weight_decay: 0.1
+optimizer: "adamw"
+
+# Routing regularization
+routing_regularizer: "entropy"
+lambda_routing: 0.01
+lambda_spectral: 0.0
+spectral_k: null  # Will default to p/4
+spectral_interval: 100
+
+# Logging
+log_every: 100
+save_routing_every: 1000
+checkpoint_every: 5000
+
+# Experiment
+name: "routed_entropy_113_add"
+seed: 42

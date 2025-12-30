@@ -1,0 +1,35 @@
+# Baseline B: Routed network WITHOUT complexity penalty
+# Tests whether gating structure alone affects grokking behavior
+# Task loss only - no routing regularization
+
+# Data
+p: 113
+operation: "add"
+train_frac: 0.3
+data_seed: 42
+
+# Model
+model_type: "routed"
+hidden_dim: 128
+n_layers: 4
+n_heads: 4
+
+# Training
+epochs: 50000
+lr: 0.001
+weight_decay: 0.1
+optimizer: "adamw"
+
+# NO routing regularization - task loss only
+routing_regularizer: null
+lambda_routing: 0.0
+lambda_spectral: 0.0
+
+# Logging
+log_every: 100
+save_routing_every: 1000
+checkpoint_every: 5000
+
+# Experiment
+name: "routed_no_reg_113_add"
+seed: 42

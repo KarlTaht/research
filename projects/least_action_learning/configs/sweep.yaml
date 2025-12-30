@@ -1,0 +1,203 @@
+# Sweep configuration for least action learning experiments
+# Run with: python scripts/run_sweep.py (or iterate manually)
+
+# Base configuration (shared across all experiments)
+base:
+  p: 113
+  operation: "add"
+  train_frac: 0.3
+  data_seed: 42
+  hidden_dim: 128
+  n_layers: 4
+  n_heads: 4
+  epochs: 50000
+  lr: 0.001
+  weight_decay: 0.1
+  optimizer: "adamw"
+  log_every: 100
+  save_routing_every: 1000
+
+experiments:
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 1: Core Baselines
+  # Compare: A vs B vs Experimental to isolate gating vs regularization
+  # ═══════════════════════════════════════════════════════════════
+
+  # Baseline A: Vanilla MLP (no gating)
+  - name: "baseline_vanilla"
+    model_type: "baseline"
+    routing_regularizer: null
+    lambda_routing: 0.0
+
+  # Baseline B: Routed, task loss only (no complexity penalty)
+  - name: "routed_no_reg"
+    model_type: "routed"
+    routing_regularizer: null
+    lambda_routing: 0.0
+
+  # Experimental: Routed with entropy regularization
+  - name: "routed_entropy"
+    model_type: "routed"
+    routing_regularizer: "entropy"
+    lambda_routing: 0.01
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 2: Regularization Sweep
+  # Find optimal λ for entropy and sparsity regularizers
+  # ═══════════════════════════════════════════════════════════════
+
+  - name: "routed_entropy_0001"
+    model_type: "routed"
+    routing_regularizer: "entropy"
+    lambda_routing: 0.001
+
+  - name: "routed_entropy_001"
+    model_type: "routed"
+    routing_regularizer: "entropy"
+    lambda_routing: 0.01
+
+  - name: "routed_entropy_01"
+    model_type: "routed"
+    routing_regularizer: "entropy"
+    lambda_routing: 0.1
+
+  - name: "routed_sparsity_001"
+    model_type: "routed"
+    routing_regularizer: "sparsity"
+    lambda_routing: 0.01
+
+  - name: "routed_sparsity_01"
+    model_type: "routed"
+    routing_regularizer: "sparsity"
+    lambda_routing: 0.1
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 3: Spectral Smoothness
+  # Test spectral regularization on top of entropy
+  # ═══════════════════════════════════════════════════════════════
+
+  - name: "routed_spectral_001"
+    model_type: "routed"
+    routing_regularizer: "entropy"
+    lambda_routing: 0.01
+    lambda_spectral: 0.01
+    spectral_k: 28  # p/4
+
+  - name: "routed_spectral_01"
+    model_type: "routed"
+    routing_regularizer: "entropy"
+    lambda_routing: 0.01
+    lambda_spectral: 0.1
+    spectral_k: 28
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 4: Depth Scaling
+  # Does gating help more at greater depth?
+  # ═══════════════════════════════════════════════════════════════
+
+  # Baseline A at various depths
+  - name: "baseline_2layer"
+    model_type: "baseline"
+    n_layers: 2
+
+  - name: "baseline_6layer"
+    model_type: "baseline"
+    n_layers: 6
+
+  - name: "baseline_8layer"
+    model_type: "baseline"
+    n_layers: 8
+
+  # Baseline B (routed no reg) at various depths
+  - name: "routed_no_reg_2layer"
+    model_type: "routed"
+    n_layers: 2
+    routing_regularizer: null
+    lambda_routing: 0.0
+
+  - name: "routed_no_reg_6layer"
+    model_type: "routed"
+    n_layers: 6
+    routing_regularizer: null
+    lambda_routing: 0.0
+
+  - name: "routed_no_reg_8layer"
+    model_type: "routed"
+    n_layers: 8
+    routing_regularizer: null
+    lambda_routing: 0.0
+
+  # Experimental (routed + entropy) at various depths
+  - name: "routed_entropy_2layer"
+    model_type: "routed"
+    n_layers: 2
+    routing_regularizer: "entropy"
+    lambda_routing: 0.01
+
+  - name: "routed_entropy_6layer"
+    model_type: "routed"
+    n_layers: 6
+    routing_regularizer: "entropy"
+    lambda_routing: 0.01
+
+  - name: "routed_entropy_8layer"
+    model_type: "routed"
+    n_layers: 8
+    routing_regularizer: "entropy"
+    lambda_routing: 0.01
+
+  # ═══════════════════════════════════════════════════════════════
+  # Phase 5: Problem Complexity
+  # Easier (p=17) vs harder (p=53, multiply) problems
+  # ═══════════════════════════════════════════════════════════════
+
+  # Easy problem (p=17)
+  - name: "baseline_p17"
+    model_type: "baseline"
+    p: 17
+
+  - name: "routed_no_reg_p17"
+    model_type: "routed"
+    p: 17
+    routing_regularizer: null
+    lambda_routing: 0.0
+
+  - name: "routed_entropy_p17"
+    model_type: "routed"
+    p: 17
+    routing_regularizer: "entropy"
+    lambda_routing: 0.01
+
+  # Medium problem (p=53)
+  - name: "baseline_p53"
+    model_type: "baseline"
+    p: 53
+
+  - name: "routed_no_reg_p53"
+    model_type: "routed"
+    p: 53
+    routing_regularizer: null
+    lambda_routing: 0.0
+
+  - name: "routed_entropy_p53"
+    model_type: "routed"
+    p: 53
+    routing_regularizer: "entropy"
+    lambda_routing: 0.01
+
+  # Harder operation (multiply)
+  - name: "baseline_multiply"
+    model_type: "baseline"
+    operation: "multiply"
+
+  - name: "routed_no_reg_multiply"
+    model_type: "routed"
+    operation: "multiply"
+    routing_regularizer: null
+    lambda_routing: 0.0
+
+  - name: "routed_entropy_multiply"
+    model_type: "routed"
+    operation: "multiply"
+    routing_regularizer: "entropy"
+    lambda_routing: 0.01
