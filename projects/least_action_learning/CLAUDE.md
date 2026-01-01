@@ -24,7 +24,8 @@ projects/least_action_learning/
 │   ├── validate.yaml          # Quick validation (p=17, MLP)
 │   ├── transformer.yaml       # Transformer (p=113)
 │   ├── validate_transformer.yaml  # Quick transformer validation (p=17)
-│   └── transformer_sweep.yaml # Hyperparameter sweep (lr x wd x p)
+│   ├── transformer_sweep.yaml # Hyperparameter sweep (lr x wd x p)
+│   └── new_year_validation_sweep.yaml  # Weight decay sweep (p=113, 30/70 split)
 ├── scripts/
 │   ├── train.py               # Main training entry point
 │   └── run_sweep.py           # Run multiple experiments from sweep config
@@ -32,11 +33,22 @@ projects/least_action_learning/
 │   ├── __init__.py            # Package exports
 │   ├── data.py                # Dataset classes
 │   ├── models.py              # Model architectures
-│   ├── trainer.py             # Training loop
-│   ├── losses.py              # Loss functions, regularizers, curvature metrics
-│   ├── metrics.py             # Metric tracking
+│   ├── trainer.py             # Training loop, MetricsComputer
+│   ├── losses.py              # Loss functions, regularizers
+│   ├── metrics/               # Metrics package
+│   │   ├── __init__.py        # Package exports
+│   │   ├── curvature.py       # Jacobian, Hessian, spectral, Fisher metrics
+│   │   ├── model_properties.py # Weight norms, representation norms
+│   │   ├── optimizer.py       # Adam optimizer dynamics metrics
+│   │   ├── routing.py         # Routing entropy, head utilization
+│   │   └── training.py        # TrainingMetrics, MetricsHistory
 │   ├── routing.py             # Routing gate implementation
 │   └── visualize.py           # Plotting utilities
+├── visualizer/                # Gradio web UI for experiment analysis
+│   ├── __init__.py
+│   ├── app.py                 # Main Gradio application
+│   ├── data.py                # Experiment loading, sweep groups
+│   └── plots.py               # Plotly figure creation
 └── outputs/                   # Experiment results (gitignored)
 ```
 
@@ -74,6 +86,9 @@ python scripts/train.py --config configs/baseline.yaml --resume
 
 # Extend training by 50k epochs
 python scripts/train.py --config configs/baseline.yaml --resume --extra-epochs 50000
+
+# Launch experiment visualizer (Gradio web UI)
+python -m projects.least_action_learning.visualizer
 ```
 
 ## Model Types
@@ -122,6 +137,11 @@ warmup_epochs: 500       # Linear LR warmup from 0 to lr
 routing_regularizer: "entropy"  # null, "entropy", "sparsity", "gini"
 lambda_routing: 0.01
 lambda_spectral: 0.0
+
+# Metrics (new)
+compute_weight_curvature: true   # Enable gradient_norm, weight_hessian, fisher
+weight_curvature_interval: 100   # Compute every N steps (expensive)
+compute_optimizer_metrics: true  # Enable Adam state analysis
 ```
 
 ### YAML Scientific Notation
@@ -151,21 +171,54 @@ Use `1.0e-8` instead of `1e-8` in YAML files. YAML 1.1 requires a decimal point 
 
 ### src/losses.py
 - `LeastActionLoss`: Combined loss with optional regularizers
-- `spectral_smoothness()`: Measures output function smoothness via FFT
-- `compute_jacobian_norm()`: Input sensitivity via random projections
-- `compute_hessian_trace()`: Curvature via Hutchinson estimator
 - Routing regularizers: entropy, sparsity, gini, consistency
+- `spectral_smoothness_loss()`: Differentiable spectral smoothness for training
+- `jacobian_regularizer()`: Differentiable Jacobian norm for training
 
-### src/metrics.py
+### src/metrics/ (package)
+**training.py**:
 - `TrainingMetrics`: Dataclass for all tracked metrics
 - `MetricsHistory`: Stores metrics over training, saves to Parquet
+
+**curvature.py** (input-sensitivity and loss landscape):
+- `spectral_smoothness()`: Output function smoothness via FFT
+- `compute_jacobian_norm()`: Input sensitivity via random projections
+- `compute_hessian_trace()`: Input curvature via Hutchinson estimator
+- `compute_gradient_norm()`: ||∇_w L|| - gradient magnitude w.r.t. weights
+- `compute_weight_hessian_trace()`: Tr(∇²_w L) - loss surface curvature
+- `compute_fisher_trace()`: Tr(∇L·∇Lᵀ) - empirical Fisher information
+
+**optimizer.py** (Adam dynamics):
+- `compute_adam_metrics()`: Extract metrics from Adam/AdamW state
+- `AdamMetrics`: Dataclass with effective_lr, adam_ratio, update_decay_ratio
+
+**model_properties.py**:
 - `compute_representation_norm()`: Hidden state magnitude before unembedding
+- `compute_layer_weight_norms()`: Per-layer weight norms
 
 ### src/visualize.py
 - `plot_training_curves()`: Loss and accuracy over time
 - `plot_spectral_analysis()`: FFT analysis of output function
 - `plot_routing_heatmap()`: Dominant routing head per input
 - `save_all_visualizations()`: Generate all plots to output dir
+
+### visualizer/ (Gradio Web UI)
+Interactive experiment analysis dashboard for comparing training runs.
+
+**app.py**:
+- Main Gradio application with multi-experiment selection
+- Sections: Training Curves, Loss Landscape, Model Properties, Adam Dynamics
+- Automatic sweep group detection from experiment names
+
+**data.py**:
+- `list_experiments()`: Find all experiments with history.parquet
+- `load_experiment()`: Load metrics DataFrame from Parquet
+- `get_sweep_groups()`: Group experiments by sweep config name
+
+**plots.py**:
+- `create_metric_plot()`: Generate Plotly figures for any metric
+- `metric_names`: Display names for all tracked metrics
+- Supports log scale for appropriate metrics (loss, norms, etc.)
 
 ## Output Format
 
@@ -181,14 +234,40 @@ Epoch   12300 | Train: 100.0% | Test:  47.1% | Loss: 1.23e-04, rnorm=45.2, smoot
 - **jac**: Jacobian norm (input sensitivity)
 - **|hess|**: Absolute Hessian trace (curvature)
 
-All metrics are saved to `history.parquet` for later analysis.
+### Metrics Saved to Parquet
 
-## Hyperparameter Sweep
+All metrics below are saved to `history.parquet`:
 
-The sweep config (`transformer_sweep.yaml`) runs 18 experiments:
+**Training Basics**: epoch, train_loss, test_loss, train_acc, test_acc
+
+**Input Sensitivity** (every epoch):
+- spectral_smoothness, jacobian_norm, hessian_trace, representation_norm
+
+**Weight Curvature** (every `weight_curvature_interval` epochs):
+- gradient_norm: ||∇_w L|| magnitude
+- weight_hessian_trace: Tr(∇²_w L) loss surface curvature
+- fisher_trace: Tr(∇L·∇Lᵀ) empirical Fisher information
+
+**Adam Optimizer Dynamics** (every log step):
+- effective_lr_mean/max: sqrt(v_t) statistics (larger = smaller effective LR)
+- adam_ratio_mean/max: |m_t|/(sqrt(v_t)+eps) signal-to-noise ratio
+- update_decay_ratio: ||gradient update|| / ||weight decay||
+
+## Hyperparameter Sweeps
+
+### transformer_sweep.yaml (18 experiments)
+Full grid search over learning rate and weight decay at two problem sizes:
 - Problem sizes: p=17 (faster grokking) and p=113 (slower)
 - Learning rates: 3e-4, 1e-3, 3e-3
 - Weight decay: 0.5, 1.0, 2.0
+- Train/test split: 50/50
+
+### new_year_validation_sweep.yaml (5 experiments)
+Focused weight decay exploration with smaller training set:
+- Problem size: p=113
+- Learning rate: 3e-4 (fixed)
+- Weight decay: 0.5, 0.75, 1.0, 1.25, 1.5
+- Train/test split: 30/70
 
 ```bash
 # Run full sweep (sequential)
@@ -196,6 +275,9 @@ python scripts/run_sweep.py --config configs/transformer_sweep.yaml
 
 # Resume from experiment index 5
 python scripts/run_sweep.py --config configs/transformer_sweep.yaml --start-from 5
+
+# Run new year validation sweep
+python scripts/run_sweep.py --config configs/new_year_validation_sweep.yaml
 ```
 
 ## Troubleshooting

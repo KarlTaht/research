@@ -11,18 +11,25 @@ import json
 
 from .data import ModularArithmeticDataset, SequenceArithmeticDataset
 from .models import BaselineMLP, RoutedNetwork, GrokTransformer, create_model
-from .losses import (
-    LeastActionLoss,
-    spectral_smoothness,
-    compute_jacobian_norm,
-    compute_hessian_trace,
-)
+from .losses import LeastActionLoss
 from .metrics import (
     TrainingMetrics,
     MetricsHistory,
     compute_layer_weight_norms,
     compute_total_weight_norm,
     compute_representation_norm,
+    compute_per_layer_representation_norms,
+    spectral_smoothness,
+    compute_jacobian_norm,
+    compute_hessian_trace,
+    compute_per_layer_jacobian_norms,
+    compute_per_layer_hessian_traces,
+    # Weight-curvature metrics (loss landscape)
+    compute_gradient_norm,
+    compute_weight_hessian_trace,
+    compute_fisher_trace,
+    # Adam optimizer dynamics
+    compute_adam_metrics,
 )
 
 
@@ -65,6 +72,17 @@ class TrainerConfig:
     save_routing_every: int = 1000
     checkpoint_every: int = 5000
 
+    # Per-layer metrics (new)
+    compute_per_layer_metrics: bool = False  # Enable per-layer curvature metrics
+
+    # Weight curvature metrics (loss landscape)
+    compute_weight_curvature: bool = True       # Enable gradient_norm, weight_hessian, fisher
+    weight_curvature_interval: int = 100        # Compute every N steps (expensive)
+    weight_hessian_samples: int = 10            # Hutchinson samples for Hessian trace
+
+    # Adam optimizer dynamics
+    compute_optimizer_metrics: bool = True      # Enable Adam state analysis
+
     # Experiment
     name: str = ""
     seed: int = 42
@@ -81,6 +99,339 @@ class TrainerConfig:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+class MetricsComputer:
+    """
+    Encapsulates metric computation logic for training loops.
+
+    Separates metric computation from the training loop for cleaner code
+    and easier testing/extension.
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        device: torch.device,
+        config: TrainerConfig,
+        is_transformer: bool = False,
+        optimizer: Optional[optim.Optimizer] = None,
+    ):
+        self.model = model
+        self.device = device
+        self.config = config
+        self.is_transformer = is_transformer
+        self.optimizer = optimizer
+
+    def compute_routing_metrics(
+        self,
+        routing_weights: Optional[list[Tensor]],
+    ) -> tuple[float, list[float]]:
+        """
+        Compute routing entropy and head utilization.
+
+        Args:
+            routing_weights: List of [batch, n_heads] tensors per layer
+
+        Returns:
+            Tuple of (routing_entropy, head_utilization_list)
+        """
+        if routing_weights is None:
+            return 0.0, []
+
+        routing_entropy = sum(
+            -(w * w.log().clamp(min=-100)).sum(dim=-1).mean().item()
+            for w in routing_weights
+        ) / len(routing_weights)
+
+        head_util = torch.stack(routing_weights).mean(dim=(0, 1)).tolist()
+        return routing_entropy, head_util
+
+    def compute_spectral_smoothness(self) -> float:
+        """Compute spectral smoothness of current model."""
+        k = self.config.spectral_k or (self.config.p // 4)
+        return spectral_smoothness(
+            self.model, self.config.p, k, self.device,
+            is_transformer=self.is_transformer
+        )
+
+    def compute_curvature_metrics(
+        self,
+        sample_inputs: Tensor,
+    ) -> tuple[float, float]:
+        """
+        Compute Jacobian norm and Hessian trace.
+
+        Args:
+            sample_inputs: Subset of inputs for efficiency
+
+        Returns:
+            Tuple of (jacobian_norm, hessian_trace)
+        """
+        jac_norm = compute_jacobian_norm(
+            self.model, sample_inputs,
+            num_samples=10,
+            is_transformer=self.is_transformer,
+        )
+        hess_trace = compute_hessian_trace(
+            self.model, sample_inputs,
+            num_hutchinson_samples=5,
+            is_transformer=self.is_transformer,
+        )
+        return jac_norm, hess_trace
+
+    def compute_per_layer_curvature(
+        self,
+        sample_inputs: Tensor,
+    ) -> tuple[list[float], list[float]]:
+        """
+        Compute per-layer Jacobian norms and Hessian traces.
+
+        Args:
+            sample_inputs: Subset of inputs for efficiency
+
+        Returns:
+            Tuple of (layer_jacobian_norms, layer_hessian_traces)
+        """
+        layer_jac_norms = compute_per_layer_jacobian_norms(
+            self.model, sample_inputs,
+            num_samples=5,  # Fewer samples for per-layer (expensive)
+            is_transformer=self.is_transformer,
+        )
+        layer_hess_traces = compute_per_layer_hessian_traces(
+            self.model, sample_inputs,
+            num_hutchinson_samples=3,
+            is_transformer=self.is_transformer,
+        )
+        return layer_jac_norms, layer_hess_traces
+
+    def compute_weight_metrics(self) -> tuple[list[float], float]:
+        """
+        Compute layer and total weight norms.
+
+        Returns:
+            Tuple of (layer_weight_norms, total_weight_norm)
+        """
+        layer_norms = compute_layer_weight_norms(self.model)
+        total_norm = compute_total_weight_norm(self.model)
+        return layer_norms, total_norm
+
+    def compute_representation_metrics(
+        self,
+        inputs: Tensor,
+    ) -> tuple[float, Optional[list[float]]]:
+        """
+        Compute total and optionally per-layer representation norms.
+
+        Args:
+            inputs: Input tensor
+
+        Returns:
+            Tuple of (representation_norm, layer_representation_norms or None)
+        """
+        repr_norm = compute_representation_norm(self.model, inputs)
+
+        layer_repr_norms = None
+        if self.config.compute_per_layer_metrics:
+            layer_repr_norms = compute_per_layer_representation_norms(self.model, inputs)
+
+        return repr_norm, layer_repr_norms
+
+    def compute_weight_curvature_metrics(
+        self,
+        inputs: Tensor,
+        targets: Tensor,
+    ) -> tuple[float, float, float]:
+        """
+        Compute weight-based curvature metrics (loss landscape analysis).
+
+        These measure the loss surface geometry w.r.t. model weights:
+        - gradient_norm: ||grad_w L|| - magnitude of loss gradient
+        - weight_hessian_trace: Tr(grad^2_w L) - curvature of loss surface
+        - fisher_trace: Tr(grad L * grad L^T) - empirical Fisher information
+
+        Args:
+            inputs: Training inputs for loss computation
+            targets: Training targets for loss computation
+
+        Returns:
+            Tuple of (gradient_norm, weight_hessian_trace, fisher_trace)
+        """
+        # Loss function for curvature computation
+        def loss_fn(logits: Tensor, targets: Tensor) -> Tensor:
+            return nn.functional.cross_entropy(logits, targets)
+
+        # Sample subset for efficiency
+        sample_size = min(256, len(inputs))
+        sample_indices = torch.randperm(len(inputs), device=inputs.device)[:sample_size]
+        sample_inputs = inputs[sample_indices]
+        sample_targets = targets[sample_indices]
+
+        # Gradient norm (fast - single forward/backward)
+        grad_norm = compute_gradient_norm(
+            self.model, loss_fn, sample_inputs, sample_targets
+        )
+
+        # Weight Hessian trace (expensive - Hutchinson estimator)
+        hessian_trace = compute_weight_hessian_trace(
+            self.model, loss_fn, sample_inputs, sample_targets,
+            num_hutchinson_samples=self.config.weight_hessian_samples,
+        )
+
+        # Fisher trace (moderate - per-sample gradients)
+        fisher = compute_fisher_trace(
+            self.model, loss_fn, sample_inputs, sample_targets,
+            max_samples=32,
+        )
+
+        return grad_norm, hessian_trace, fisher
+
+    def compute_optimizer_metrics(
+        self,
+    ) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float], Optional[float]]:
+        """
+        Compute Adam optimizer dynamics metrics.
+
+        Extracts and analyzes the internal state of Adam/AdamW:
+        - effective_lr_mean/max: sqrt(v_t) statistics (adaptive LR scaling)
+        - adam_ratio_mean/max: |m_t|/(sqrt(v_t)+eps) (signal-to-noise)
+        - update_decay_ratio: ||grad update|| / ||weight decay||
+
+        Returns:
+            Tuple of (effective_lr_mean, effective_lr_max, adam_ratio_mean,
+                     adam_ratio_max, update_decay_ratio) or all None if unavailable
+        """
+        if self.optimizer is None:
+            return None, None, None, None, None
+
+        adam_metrics = compute_adam_metrics(
+            self.optimizer,
+            weight_decay=self.config.weight_decay,
+            eps=self.config.eps,
+        )
+
+        if adam_metrics is None:
+            return None, None, None, None, None
+
+        return (
+            adam_metrics.effective_lr_mean,
+            adam_metrics.effective_lr_max,
+            adam_metrics.adam_ratio_mean,
+            adam_metrics.adam_ratio_max,
+            adam_metrics.update_decay_ratio,
+        )
+
+    def compute_all_metrics(
+        self,
+        epoch: int,
+        train_loss: float,
+        train_acc: float,
+        test_loss: float,
+        test_acc: float,
+        routing_weights: Optional[list[Tensor]],
+        test_inputs: Tensor,
+        train_inputs: Optional[Tensor] = None,
+        train_targets: Optional[Tensor] = None,
+    ) -> TrainingMetrics:
+        """
+        Compute all metrics and return a TrainingMetrics object.
+
+        Args:
+            epoch: Current training epoch
+            train_loss: Training loss
+            train_acc: Training accuracy
+            test_loss: Test loss
+            test_acc: Test accuracy
+            routing_weights: Routing weights from model (if applicable)
+            test_inputs: Test inputs for curvature/representation metrics
+            train_inputs: Training inputs for weight curvature metrics
+            train_targets: Training targets for weight curvature metrics
+
+        Returns:
+            TrainingMetrics with all computed metrics
+        """
+        # Routing metrics
+        routing_entropy, head_util = self.compute_routing_metrics(routing_weights)
+
+        # Spectral smoothness
+        smoothness = self.compute_spectral_smoothness()
+
+        # Sample inputs for curvature computation (for efficiency)
+        sample_size = min(256, len(test_inputs))
+        sample_indices = torch.randperm(len(test_inputs))[:sample_size]
+        sample_inputs = test_inputs[sample_indices]
+
+        # Input-sensitivity curvature metrics (Jacobian, Hessian w.r.t. inputs)
+        jac_norm, hess_trace = self.compute_curvature_metrics(sample_inputs)
+
+        # Per-layer curvature metrics (if enabled)
+        layer_jac_norms = None
+        layer_hess_traces = None
+        if self.config.compute_per_layer_metrics:
+            layer_jac_norms, layer_hess_traces = self.compute_per_layer_curvature(sample_inputs)
+
+        # Weight metrics
+        layer_norms, total_norm = self.compute_weight_metrics()
+
+        # Representation metrics
+        repr_norm, layer_repr_norms = self.compute_representation_metrics(test_inputs)
+
+        # Weight-curvature metrics (loss landscape - periodic due to expense)
+        gradient_norm = None
+        weight_hessian_trace = None
+        fisher_trace = None
+        if (
+            self.config.compute_weight_curvature
+            and train_inputs is not None
+            and train_targets is not None
+            and epoch % self.config.weight_curvature_interval == 0
+        ):
+            gradient_norm, weight_hessian_trace, fisher_trace = \
+                self.compute_weight_curvature_metrics(train_inputs, train_targets)
+
+        # Adam optimizer dynamics
+        effective_lr_mean = None
+        effective_lr_max = None
+        adam_ratio_mean = None
+        adam_ratio_max = None
+        update_decay_ratio = None
+        if self.config.compute_optimizer_metrics:
+            (
+                effective_lr_mean,
+                effective_lr_max,
+                adam_ratio_mean,
+                adam_ratio_max,
+                update_decay_ratio,
+            ) = self.compute_optimizer_metrics()
+
+        return TrainingMetrics(
+            step=epoch,
+            train_loss=train_loss,
+            train_acc=train_acc,
+            test_loss=test_loss,
+            test_acc=test_acc,
+            routing_entropy=routing_entropy,
+            head_utilization=head_util,
+            spectral_smoothness=smoothness,
+            layer_weight_norms=layer_norms,
+            total_weight_norm=total_norm,
+            representation_norm=repr_norm,
+            jacobian_norm=jac_norm,
+            hessian_trace=hess_trace,
+            layer_jacobian_norms=layer_jac_norms,
+            layer_hessian_traces=layer_hess_traces,
+            layer_representation_norms=layer_repr_norms,
+            # Weight-curvature metrics
+            gradient_norm=gradient_norm,
+            weight_hessian_trace=weight_hessian_trace,
+            fisher_trace=fisher_trace,
+            # Adam optimizer dynamics
+            effective_lr_mean=effective_lr_mean,
+            effective_lr_max=effective_lr_max,
+            adam_ratio_mean=adam_ratio_mean,
+            adam_ratio_max=adam_ratio_max,
+            update_decay_ratio=update_decay_ratio,
+        )
 
 
 class Trainer:
@@ -145,6 +496,15 @@ class Trainer:
             lambda_spectral=config.lambda_spectral,
             spectral_k=config.spectral_k,
             spectral_interval=config.spectral_interval,
+        )
+
+        # Metrics computer
+        self.metrics_computer = MetricsComputer(
+            model=self.model,
+            device=self.device,
+            config=config,
+            is_transformer=self.is_transformer,
+            optimizer=self.optimizer,
         )
 
         # Metrics history
@@ -300,14 +660,122 @@ class Trainer:
 
         return loss.item(), acc
 
-    @torch.no_grad()
     def compute_spectral_smoothness(self) -> float:
-        """Compute spectral smoothness of current model."""
-        k = self.config.spectral_k or (self.config.p // 4)
+        """
+        Compute spectral smoothness of the learned function.
+
+        Returns:
+            Spectral smoothness value in [0, 1], where higher means smoother.
+        """
+        K = self.config.spectral_k or self.config.p // 4
         return spectral_smoothness(
-            self.model, self.config.p, k, self.device,
-            is_transformer=self.is_transformer
+            self.model,
+            self.config.p,
+            K,
+            self.device,
+            is_transformer=self.is_transformer,
         )
+
+    # ─── Helper Methods ───────────────────────────────────────────────────────
+
+    def _apply_warmup(self, epoch: int) -> None:
+        """Apply learning rate warmup if configured."""
+        if self.config.warmup_epochs > 0 and epoch < self.config.warmup_epochs:
+            warmup_factor = (epoch + 1) / self.config.warmup_epochs
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = self.config.lr * warmup_factor
+        elif epoch == self.config.warmup_epochs and self.config.warmup_epochs > 0:
+            # Restore full learning rate after warmup
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = self.config.lr
+
+    def _log_metrics(
+        self,
+        epoch: int,
+        train_loss: float,
+        train_acc: float,
+        routing_weights: Optional[list[Tensor]],
+    ) -> TrainingMetrics:
+        """
+        Compute and log all metrics for the current epoch.
+
+        Returns:
+            TrainingMetrics object with all computed metrics
+        """
+        test_loss, test_acc = self.evaluate()
+
+        metrics = self.metrics_computer.compute_all_metrics(
+            epoch=epoch,
+            train_loss=train_loss,
+            train_acc=train_acc,
+            test_loss=test_loss,
+            test_acc=test_acc,
+            routing_weights=routing_weights,
+            test_inputs=self.test_inputs,
+            train_inputs=self.train_inputs,
+            train_targets=self.train_targets,
+        )
+
+        # Determine if routing should be saved
+        save_routing = (
+            routing_weights is not None
+            and epoch % self.config.save_routing_every == 0
+        )
+
+        self.history.log(
+            metrics,
+            routing_weights if save_routing else None,
+        )
+
+        if save_routing:
+            self.routing_snapshot_steps.append(epoch)
+
+        return metrics
+
+    def _update_best_model(self, epoch: int, test_acc: float) -> None:
+        """Update best model tracking and save checkpoint if improved."""
+        if test_acc > self.best_test_acc:
+            self.best_test_acc = test_acc
+            self.best_epoch = epoch
+            self.save_checkpoint("best.pt", epoch=epoch)
+
+    def _print_progress(
+        self,
+        metrics: TrainingMetrics,
+        routing_weights: Optional[list[Tensor]],
+    ) -> None:
+        """Print training progress to stdout."""
+        routing_str = f", entropy={metrics.routing_entropy:.3f}" if routing_weights else ""
+        print(
+            f"Epoch {metrics.step:7d} | "
+            f"Train: {metrics.train_acc*100:5.1f}% | "
+            f"Test: {metrics.test_acc*100:5.1f}% | "
+            f"Loss: {metrics.train_loss:.2e}, "
+            f"rnorm={metrics.representation_norm:.1f}, smooth={metrics.spectral_smoothness:.3f}, "
+            f"jac={metrics.jacobian_norm:.2e}, |hess|={abs(metrics.hessian_trace):.2e}"
+            f"{routing_str}"
+        )
+
+    def _print_training_header(self, start_epoch: int) -> None:
+        """Print training configuration header."""
+        print(f"Training {self.config.model_type} model on mod-{self.config.p} {self.config.operation}")
+        print(f"  Layers: {self.config.n_layers}, Hidden: {self.config.hidden_dim}")
+        if self.config.model_type == "routed":
+            print(f"  Heads: {self.config.n_heads}, Routing reg: {self.config.routing_regularizer}")
+        elif self.config.model_type == "transformer":
+            print(f"  Attention heads: {self.config.n_heads}, Vocab: {self.dataset.vocab_size}")
+        print(f"  Device: {self.device}")
+        print(f"  Parameters: {self.model.count_parameters():,}")
+        if start_epoch > 0:
+            print(f"  Resuming from epoch {start_epoch}")
+        print()
+
+    def _print_training_summary(self) -> None:
+        """Print training completion summary."""
+        print()
+        print(f"Training complete. Best test acc: {self.best_test_acc:.4f} at epoch {self.best_epoch}")
+
+    # ─── Main Training Loop ───────────────────────────────────────────────────
 
     def train(
         self,
@@ -324,138 +792,36 @@ class Trainer:
         Returns:
             MetricsHistory with all training metrics
         """
-        print(f"Training {self.config.model_type} model on mod-{self.config.p} {self.config.operation}")
-        print(f"  Layers: {self.config.n_layers}, Hidden: {self.config.hidden_dim}")
-        if self.config.model_type == "routed":
-            print(f"  Heads: {self.config.n_heads}, Routing reg: {self.config.routing_regularizer}")
-        elif self.config.model_type == "transformer":
-            print(f"  Attention heads: {self.config.n_heads}, Vocab: {self.dataset.vocab_size}")
-        print(f"  Device: {self.device}")
-        print(f"  Parameters: {self.model.count_parameters():,}")
-        if start_epoch > 0:
-            print(f"  Resuming from epoch {start_epoch}")
-        print()
+        self._print_training_header(start_epoch)
 
         for epoch in range(start_epoch, self.config.epochs):
-            # Learning rate warmup
-            if self.config.warmup_epochs > 0 and epoch < self.config.warmup_epochs:
-                warmup_factor = (epoch + 1) / self.config.warmup_epochs
-                for param_group in self.optimizer.param_groups:
-                    param_group['lr'] = self.config.lr * warmup_factor
-            elif epoch == self.config.warmup_epochs and self.config.warmup_epochs > 0:
-                # Restore full learning rate after warmup
-                for param_group in self.optimizer.param_groups:
-                    param_group['lr'] = self.config.lr
+            self._apply_warmup(epoch)
 
             # Training step
             train_loss, train_acc, routing_weights = self.train_step(epoch)
 
-            # Logging
+            # Periodic logging
             if epoch % self.config.log_every == 0:
-                test_loss, test_acc = self.evaluate()
+                metrics = self._log_metrics(epoch, train_loss, train_acc, routing_weights)
+                self._update_best_model(epoch, metrics.test_acc)
+                self._print_progress(metrics, routing_weights)
 
-                # Compute routing metrics
-                if routing_weights is not None:
-                    routing_entropy = sum(
-                        -(w * w.log().clamp(min=-100)).sum(dim=-1).mean().item()
-                        for w in routing_weights
-                    ) / len(routing_weights)
-                    head_util = torch.stack(routing_weights).mean(dim=(0, 1)).tolist()
-                else:
-                    routing_entropy = 0.0
-                    head_util = []
-
-                # Spectral smoothness (every log_every epochs)
-                smoothness = self.compute_spectral_smoothness()
-
-                # Curvature metrics (every log_every epochs)
-                # Sample subset for efficiency
-                sample_size = min(256, len(self.test_inputs))
-                sample_indices = torch.randperm(len(self.test_inputs))[:sample_size]
-                sample_inputs = self.test_inputs[sample_indices]
-
-                # Compute Jacobian/Hessian w.r.t. embeddings for transformers
-                jac_norm = compute_jacobian_norm(
-                    self.model, sample_inputs,
-                    num_samples=10,
-                    is_transformer=self.is_transformer,
-                )
-                hess_trace = compute_hessian_trace(
-                    self.model, sample_inputs,
-                    num_hutchinson_samples=5,
-                    is_transformer=self.is_transformer,
-                )
-
-                # Weight norms
-                layer_norms = compute_layer_weight_norms(self.model)
-                total_norm = compute_total_weight_norm(self.model)
-
-                # Representation norm (hidden state before unembedding)
-                repr_norm = compute_representation_norm(self.model, self.test_inputs)
-
-                # Create metrics object
-                metrics = TrainingMetrics(
-                    step=epoch,
-                    train_loss=train_loss,
-                    train_acc=train_acc,
-                    test_loss=test_loss,
-                    test_acc=test_acc,
-                    routing_entropy=routing_entropy,
-                    head_utilization=head_util,
-                    spectral_smoothness=smoothness,
-                    layer_weight_norms=layer_norms,
-                    total_weight_norm=total_norm,
-                    representation_norm=repr_norm,
-                    jacobian_norm=jac_norm,
-                    hessian_trace=hess_trace,
-                )
-
-                # Log to history
-                save_routing = (
-                    routing_weights is not None
-                    and epoch % self.config.save_routing_every == 0
-                )
-                self.history.log(
-                    metrics,
-                    routing_weights if save_routing else None,
-                )
-                if save_routing:
-                    self.routing_snapshot_steps.append(epoch)
-
-                # Track best model
-                if test_acc > self.best_test_acc:
-                    self.best_test_acc = test_acc
-                    self.best_epoch = epoch
-                    self.save_checkpoint("best.pt", epoch=epoch)
-
-                # Print progress
-                routing_str = f", entropy={routing_entropy:.3f}" if routing_weights else ""
-                print(
-                    f"Epoch {epoch:7d} | "
-                    f"Train: {train_acc*100:5.1f}% | "
-                    f"Test: {test_acc*100:5.1f}% | "
-                    f"Loss: {train_loss:.2e}, "
-                    f"rnorm={repr_norm:.1f}, smooth={smoothness:.3f}, "
-                    f"jac={jac_norm:.2e}, |hess|={abs(hess_trace):.2e}"
-                    f"{routing_str}"
-                )
-
-                # Callback
                 if callback is not None:
                     callback(epoch, metrics)
 
-            # Checkpointing
+            # Periodic checkpointing
             if epoch % self.config.checkpoint_every == 0 and epoch > 0:
                 self.save_checkpoint(f"checkpoint_{epoch}.pt", epoch=epoch)
 
-        # Final save (epoch is config.epochs - 1 since range is exclusive)
+        # Final save
         self.save_checkpoint("final.pt", epoch=self.config.epochs - 1)
         self.save_history()
 
-        print()
-        print(f"Training complete. Best test acc: {self.best_test_acc:.4f} at epoch {self.best_epoch}")
+        self._print_training_summary()
 
         return self.history
+
+    # ─── Checkpointing ────────────────────────────────────────────────────────
 
     def save_checkpoint(self, filename: str, epoch: Optional[int] = None):
         """Save model checkpoint."""

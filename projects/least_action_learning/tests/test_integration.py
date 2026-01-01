@@ -22,12 +22,7 @@ from projects.least_action_learning.src.models import (
     GrokTransformer,
     create_model,
 )
-from projects.least_action_learning.src.losses import (
-    LeastActionLoss,
-    spectral_smoothness,
-    compute_jacobian_norm,
-    compute_hessian_trace,
-)
+from projects.least_action_learning.src.losses import LeastActionLoss
 from projects.least_action_learning.src.metrics import (
     TrainingMetrics,
     MetricsHistory,
@@ -35,6 +30,9 @@ from projects.least_action_learning.src.metrics import (
     compute_head_utilization,
     compute_total_weight_norm,
     compute_representation_norm,
+    spectral_smoothness,
+    compute_jacobian_norm,
+    compute_hessian_trace,
 )
 from projects.least_action_learning.src.routing import RoutingGate, RoutedLayer
 

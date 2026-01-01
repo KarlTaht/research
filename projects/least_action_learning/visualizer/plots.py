@@ -483,13 +483,21 @@ def create_grokking_summary_table(analysis_df: pd.DataFrame) -> go.Figure:
         analysis_df: DataFrame from analyze_all_experiments()
 
     Returns:
-        Plotly figure with table
+        Plotly figure with table including ID and Group columns
     """
     if analysis_df.empty:
         return create_empty_figure("No experiments to analyze")
 
     # Format columns for display
     df = analysis_df.copy()
+
+    # Add sequential ID column
+    df.insert(0, "ID", range(1, len(df) + 1))
+
+    # Ensure group column exists (for backward compatibility)
+    if "group" not in df.columns:
+        df["group"] = "no group"
+
     df["Train≥98%"] = df["pct_train_above_98"].apply(lambda x: f"{x:.1f}%")
     df["Test≥95%"] = df["pct_test_above_95"].apply(lambda x: f"{x:.1f}%")
     df["Final Test"] = (df["final_test_acc"] * 100).round(1).astype(str) + "%"
@@ -502,24 +510,40 @@ def create_grokking_summary_table(analysis_df: pd.DataFrame) -> go.Figure:
     df["lr_fmt"] = df["lr"].apply(lambda x: f"{x:.0e}" if x > 0 else "-")
     df["wd_fmt"] = df["weight_decay"].apply(lambda x: f"{x:.1f}" if x > 0 else "-")
 
-    # Row colors: gradient based on test percentage (green = high, red = low)
-    def get_row_color(pct):
-        if pct >= 90:
-            return "#d4edda"  # Green
-        elif pct >= 70:
-            return "#fff3cd"  # Yellow
-        elif pct >= 50:
-            return "#ffeeba"  # Light orange
-        else:
-            return "#f8d7da"  # Red
+    # Color palette for groups
+    group_colors = {
+        "no group": "#e9ecef",        # Light gray for ungrouped
+        "transformer_sweep": "#cce5ff",  # Light blue
+        "sweep": "#d4edda",           # Light green
+    }
 
-    row_colors = [[get_row_color(p) for p in df["pct_test_above_95"]]]
+    # Get unique groups and assign colors to any new ones
+    extra_colors = ["#f8d7da", "#fff3cd", "#d1c4e9", "#ffccbc", "#b2dfdb"]
+    unique_groups = df["group"].unique()
+    for i, group in enumerate(unique_groups):
+        if group not in group_colors:
+            group_colors[group] = extra_colors[i % len(extra_colors)]
+
+    # Row colors: combine group color with performance gradient
+    def get_row_color(group, pct):
+        base_color = group_colors.get(group, "#e9ecef")
+        # Darken/adjust based on performance
+        if pct >= 90:
+            return base_color  # Keep group color for good performance
+        elif pct >= 50:
+            return "#fff3cd"  # Yellow for moderate
+        else:
+            return "#f8d7da"  # Red for poor
+
+    row_colors = [[get_row_color(g, p) for g, p in zip(df["group"], df["pct_test_above_95"])]]
 
     fig = go.Figure(
         data=[
             go.Table(
                 header=dict(
                     values=[
+                        "ID",
+                        "Group",
                         "Name",
                         "p",
                         "lr",
@@ -537,6 +561,8 @@ def create_grokking_summary_table(analysis_df: pd.DataFrame) -> go.Figure:
                 ),
                 cells=dict(
                     values=[
+                        df["ID"],
+                        df["group"],
                         df["name"],
                         df["p"],
                         df["lr_fmt"],
@@ -547,7 +573,7 @@ def create_grokking_summary_table(analysis_df: pd.DataFrame) -> go.Figure:
                         df["Final Test"],
                         df["Variance"],
                     ],
-                    fill_color=row_colors * 9,  # Repeat for all columns
+                    fill_color=row_colors * 11,  # Repeat for all columns
                     align="left",
                     height=25,
                     font=dict(size=11),
@@ -716,10 +742,25 @@ def create_multi_experiment_comparison(
         "hessian_trace": "Hessian Trace",
         "representation_norm": "Representation Norm",
         "spectral_smoothness": "Spectral Smoothness",
+        # Weight-curvature metrics (loss landscape)
+        "gradient_norm": "Gradient Norm (||∇_w L||)",
+        "weight_hessian_trace": "Weight Hessian Trace",
+        "fisher_trace": "Fisher Trace",
+        # Adam optimizer dynamics
+        "effective_lr_mean": "Effective LR (mean √v)",
+        "effective_lr_max": "Effective LR (max √v)",
+        "adam_ratio_mean": "Adam Ratio (mean)",
+        "adam_ratio_max": "Adam Ratio (max)",
+        "update_decay_ratio": "Update/Decay Ratio",
     }
 
     # Metrics that should use log scale
-    log_scale_metrics = {"test_loss", "train_loss", "jacobian_norm"}
+    log_scale_metrics = {
+        "test_loss", "train_loss", "jacobian_norm",
+        "gradient_norm", "weight_hessian_trace", "fisher_trace",
+        "effective_lr_mean", "effective_lr_max",
+        "adam_ratio_mean", "adam_ratio_max", "update_decay_ratio",
+    }
 
     fig = go.Figure()
     has_data = False

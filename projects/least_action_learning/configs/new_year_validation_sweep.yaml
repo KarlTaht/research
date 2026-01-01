@@ -1,0 +1,54 @@
+# New Year validation sweep: weight decay exploration at p=113 with 30/70 split
+# 5 runs exploring weight decay from 0.5 to 1.5 with fixed learning rate
+# Goal: Validate grokking with smaller training set and varying regularization
+
+base:
+  # Data
+  p: 113
+  operation: "add"
+  train_frac: 0.3  # 30% train, 70% test
+  data_seed: 42
+
+  # Model
+  model_type: "transformer"
+  hidden_dim: 128
+  n_layers: 2
+  n_heads: 4
+
+  # Training
+  epochs: 50000
+  lr: 0.0003  # 3e-4
+  optimizer: "adamw"
+  beta1: 0.9
+  beta2: 0.98
+  eps: 1.0e-8
+  grad_clip: 1.0
+  warmup_epochs: 500
+
+  # No routing regularization
+  routing_regularizer: null
+  lambda_routing: 0.0
+  lambda_spectral: 0.0
+
+  # Logging
+  log_every: 100
+  save_routing_every: 1000
+  checkpoint_every: 10000
+
+  seed: 42
+
+experiments:
+  - name: "p113_lr3e-4_wd0.50_train30"
+    weight_decay: 0.5
+
+  - name: "p113_lr3e-4_wd0.75_train30"
+    weight_decay: 0.75
+
+  - name: "p113_lr3e-4_wd1.00_train30"
+    weight_decay: 1.0
+
+  - name: "p113_lr3e-4_wd1.25_train30"
+    weight_decay: 1.25
+
+  - name: "p113_lr3e-4_wd1.50_train30"
+    weight_decay: 1.5

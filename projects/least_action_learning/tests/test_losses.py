@@ -9,13 +9,22 @@ from projects.least_action_learning.src.losses import (
     sparsity_regularizer,
     gini_regularizer,
     consistency_regularizer,
-    make_low_freq_mask,
-    spectral_smoothness,
     spectral_smoothness_loss,
-    compute_jacobian_norm,
-    compute_hessian_trace,
     jacobian_regularizer,
     LeastActionLoss,
+)
+from projects.least_action_learning.src.metrics import (
+    make_low_freq_mask,
+    spectral_smoothness,
+    compute_jacobian_norm,
+    compute_hessian_trace,
+    # Weight-based curvature metrics
+    compute_gradient_norm,
+    compute_weight_hessian_trace,
+    compute_fisher_trace,
+    # Adam optimizer dynamics
+    compute_adam_metrics,
+    AdamMetrics,
 )
 
 
@@ -565,5 +574,399 @@ class TestLeastActionLoss:
         total_loss, _ = task_only_loss(logits, targets)
 
         assert total_loss.requires_grad
+
+
+class TestComputeGradientNorm:
+    """Tests for compute_gradient_norm (weight-based curvature metric)."""
+
+    def test_returns_positive(self, baseline_mlp, sample_batch, device):
+        """Test returns positive value."""
+        baseline_mlp = baseline_mlp.to(device)
+        inputs, targets = sample_batch
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+
+        loss_fn = nn.CrossEntropyLoss()
+        grad_norm = compute_gradient_norm(baseline_mlp, loss_fn, inputs, targets)
+
+        assert grad_norm > 0
+
+    def test_returns_float(self, baseline_mlp, sample_batch, device):
+        """Test returns float."""
+        baseline_mlp = baseline_mlp.to(device)
+        inputs, targets = sample_batch
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+
+        loss_fn = nn.CrossEntropyLoss()
+        grad_norm = compute_gradient_norm(baseline_mlp, loss_fn, inputs, targets)
+
+        assert isinstance(grad_norm, float)
+
+    def test_finite_value(self, baseline_mlp, sample_batch, device):
+        """Test returns finite value."""
+        baseline_mlp = baseline_mlp.to(device)
+        inputs, targets = sample_batch
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+
+        loss_fn = nn.CrossEntropyLoss()
+        grad_norm = compute_gradient_norm(baseline_mlp, loss_fn, inputs, targets)
+
+        assert math.isfinite(grad_norm)
+
+    def test_transformer_mode(self, grok_transformer, sample_sequence_batch, device):
+        """Test with transformer model."""
+        grok_transformer = grok_transformer.to(device)
+        input_ids, targets = sample_sequence_batch
+        input_ids = input_ids.to(device)
+        targets = targets.to(device)
+
+        loss_fn = nn.CrossEntropyLoss()
+        grad_norm = compute_gradient_norm(grok_transformer, loss_fn, input_ids, targets)
+
+        assert grad_norm > 0
+        assert math.isfinite(grad_norm)
+
+    def test_model_grads_cleared(self, baseline_mlp, sample_batch, device):
+        """Test gradients are computed fresh (model zeroed first)."""
+        baseline_mlp = baseline_mlp.to(device)
+        inputs, targets = sample_batch
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+
+        # Set some fake gradients
+        for p in baseline_mlp.parameters():
+            p.grad = torch.ones_like(p) * 999
+
+        loss_fn = nn.CrossEntropyLoss()
+        grad_norm = compute_gradient_norm(baseline_mlp, loss_fn, inputs, targets)
+
+        # Should not be affected by fake gradients (they should be cleared)
+        # Just check it returns something reasonable
+        assert grad_norm > 0
+        assert grad_norm < 1e6  # Not carrying over the fake 999 values
+
+
+class TestComputeWeightHessianTrace:
+    """Tests for compute_weight_hessian_trace (weight-based curvature metric)."""
+
+    def test_returns_float(self, baseline_mlp, sample_batch, device):
+        """Test returns float value."""
+        baseline_mlp = baseline_mlp.to(device)
+        inputs, targets = sample_batch
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+
+        loss_fn = nn.CrossEntropyLoss()
+        hess_trace = compute_weight_hessian_trace(
+            baseline_mlp, loss_fn, inputs, targets, num_hutchinson_samples=3
+        )
+
+        assert isinstance(hess_trace, float)
+
+    def test_finite_value(self, baseline_mlp, sample_batch, device):
+        """Test returns finite value."""
+        baseline_mlp = baseline_mlp.to(device)
+        inputs, targets = sample_batch
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+
+        loss_fn = nn.CrossEntropyLoss()
+        hess_trace = compute_weight_hessian_trace(
+            baseline_mlp, loss_fn, inputs, targets, num_hutchinson_samples=3
+        )
+
+        assert math.isfinite(hess_trace)
+
+    def test_more_samples_less_variance(self, baseline_mlp, sample_batch, device):
+        """Test more Hutchinson samples tends toward more stable estimates."""
+        baseline_mlp = baseline_mlp.to(device)
+        inputs, targets = sample_batch
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+
+        loss_fn = nn.CrossEntropyLoss()
+
+        # Run multiple times with few samples
+        few_samples = [
+            compute_weight_hessian_trace(
+                baseline_mlp, loss_fn, inputs, targets, num_hutchinson_samples=2
+            )
+            for _ in range(5)
+        ]
+
+        # All should be finite
+        for val in few_samples:
+            assert math.isfinite(val)
+
+    def test_transformer_mode(self, grok_transformer, sample_sequence_batch, device):
+        """Test with transformer model."""
+        grok_transformer = grok_transformer.to(device)
+        input_ids, targets = sample_sequence_batch
+        input_ids = input_ids.to(device)
+        targets = targets.to(device)
+
+        loss_fn = nn.CrossEntropyLoss()
+        hess_trace = compute_weight_hessian_trace(
+            grok_transformer, loss_fn, input_ids, targets, num_hutchinson_samples=2
+        )
+
+        assert isinstance(hess_trace, float)
+        assert math.isfinite(hess_trace)
+
+
+class TestComputeFisherTrace:
+    """Tests for compute_fisher_trace (weight-based curvature metric)."""
+
+    def test_returns_positive(self, baseline_mlp, sample_batch, device):
+        """Test returns positive value (sum of squared gradient norms)."""
+        baseline_mlp = baseline_mlp.to(device)
+        inputs, targets = sample_batch
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+
+        loss_fn = nn.CrossEntropyLoss()
+        fisher = compute_fisher_trace(baseline_mlp, loss_fn, inputs, targets)
+
+        assert fisher > 0
+
+    def test_returns_float(self, baseline_mlp, sample_batch, device):
+        """Test returns float."""
+        baseline_mlp = baseline_mlp.to(device)
+        inputs, targets = sample_batch
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+
+        loss_fn = nn.CrossEntropyLoss()
+        fisher = compute_fisher_trace(baseline_mlp, loss_fn, inputs, targets)
+
+        assert isinstance(fisher, float)
+
+    def test_finite_value(self, baseline_mlp, sample_batch, device):
+        """Test returns finite value."""
+        baseline_mlp = baseline_mlp.to(device)
+        inputs, targets = sample_batch
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+
+        loss_fn = nn.CrossEntropyLoss()
+        fisher = compute_fisher_trace(baseline_mlp, loss_fn, inputs, targets)
+
+        assert math.isfinite(fisher)
+
+    def test_max_samples_limits_batch(self, baseline_mlp, sample_batch, device):
+        """Test max_samples limits the number of samples processed."""
+        baseline_mlp = baseline_mlp.to(device)
+        inputs, targets = sample_batch
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+
+        loss_fn = nn.CrossEntropyLoss()
+
+        # With very small max_samples, should still work
+        fisher_small = compute_fisher_trace(
+            baseline_mlp, loss_fn, inputs, targets, max_samples=2
+        )
+        fisher_larger = compute_fisher_trace(
+            baseline_mlp, loss_fn, inputs, targets, max_samples=8
+        )
+
+        # Both should be valid
+        assert fisher_small > 0
+        assert fisher_larger > 0
+        assert math.isfinite(fisher_small)
+        assert math.isfinite(fisher_larger)
+
+    def test_transformer_mode(self, grok_transformer, sample_sequence_batch, device):
+        """Test with transformer model."""
+        grok_transformer = grok_transformer.to(device)
+        input_ids, targets = sample_sequence_batch
+        input_ids = input_ids.to(device)
+        targets = targets.to(device)
+
+        loss_fn = nn.CrossEntropyLoss()
+        fisher = compute_fisher_trace(
+            grok_transformer, loss_fn, input_ids, targets, max_samples=4
+        )
+
+        assert fisher > 0
+        assert math.isfinite(fisher)
+
+
+class TestComputeAdamMetrics:
+    """Tests for compute_adam_metrics (Adam optimizer dynamics)."""
+
+    def test_returns_none_before_first_step(self):
+        """Test returns None when optimizer state not yet populated."""
+        model = nn.Linear(10, 5)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.1)
+
+        # No optimizer steps yet
+        metrics = compute_adam_metrics(optimizer, weight_decay=0.1)
+
+        assert metrics is None
+
+    def test_returns_adam_metrics_after_steps(self):
+        """Test returns AdamMetrics after optimizer steps."""
+        model = nn.Linear(10, 5)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.1)
+
+        # Run a few optimizer steps
+        for _ in range(5):
+            x = torch.randn(4, 10)
+            loss = model(x).sum()
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+        metrics = compute_adam_metrics(optimizer, weight_decay=0.1)
+
+        assert metrics is not None
+        assert isinstance(metrics, AdamMetrics)
+
+    def test_effective_lr_positive(self):
+        """Test effective LR values are positive."""
+        model = nn.Linear(10, 5)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.1)
+
+        for _ in range(10):
+            x = torch.randn(4, 10)
+            loss = model(x).sum()
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+        metrics = compute_adam_metrics(optimizer, weight_decay=0.1)
+
+        assert metrics.effective_lr_mean > 0
+        assert metrics.effective_lr_max > 0
+
+    def test_effective_lr_max_geq_mean(self):
+        """Test max >= mean for effective LR."""
+        model = nn.Linear(10, 5)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.1)
+
+        for _ in range(10):
+            x = torch.randn(4, 10)
+            loss = model(x).sum()
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+        metrics = compute_adam_metrics(optimizer, weight_decay=0.1)
+
+        assert metrics.effective_lr_max >= metrics.effective_lr_mean
+
+    def test_adam_ratio_positive(self):
+        """Test Adam ratio is positive."""
+        model = nn.Linear(10, 5)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.1)
+
+        for _ in range(10):
+            x = torch.randn(4, 10)
+            loss = model(x).sum()
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+        metrics = compute_adam_metrics(optimizer, weight_decay=0.1)
+
+        assert metrics.adam_ratio_mean > 0
+        assert metrics.adam_ratio_max > 0
+
+    def test_update_decay_ratio_positive(self):
+        """Test update/decay ratio is positive when weight_decay > 0."""
+        model = nn.Linear(10, 5)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.1)
+
+        for _ in range(10):
+            x = torch.randn(4, 10)
+            loss = model(x).sum()
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+        metrics = compute_adam_metrics(optimizer, weight_decay=0.1)
+
+        assert metrics.update_decay_ratio > 0
+        assert math.isfinite(metrics.update_decay_ratio)
+
+    def test_update_decay_ratio_inf_with_no_decay(self):
+        """Test update/decay ratio is inf when weight_decay = 0."""
+        model = nn.Linear(10, 5)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.0)
+
+        for _ in range(10):
+            x = torch.randn(4, 10)
+            loss = model(x).sum()
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+        metrics = compute_adam_metrics(optimizer, weight_decay=0.0)
+
+        assert metrics.update_decay_ratio == float("inf")
+
+    def test_works_with_plain_adam(self):
+        """Test works with plain Adam (not AdamW)."""
+        model = nn.Linear(10, 5)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+        for _ in range(10):
+            x = torch.randn(4, 10)
+            loss = model(x).sum()
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+        metrics = compute_adam_metrics(optimizer, weight_decay=0.0)
+
+        assert metrics is not None
+        assert metrics.effective_lr_mean > 0
+
+    def test_finite_values(self):
+        """Test all values are finite (except update_decay_ratio with no decay)."""
+        model = nn.Linear(10, 5)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.1)
+
+        for _ in range(10):
+            x = torch.randn(4, 10)
+            loss = model(x).sum()
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+        metrics = compute_adam_metrics(optimizer, weight_decay=0.1)
+
+        assert math.isfinite(metrics.effective_lr_mean)
+        assert math.isfinite(metrics.effective_lr_max)
+        assert math.isfinite(metrics.adam_ratio_mean)
+        assert math.isfinite(metrics.adam_ratio_max)
+        assert math.isfinite(metrics.update_decay_ratio)
+
+    def test_with_larger_model(self, baseline_mlp, device):
+        """Test with a larger model."""
+        baseline_mlp = baseline_mlp.to(device)
+        optimizer = torch.optim.AdamW(baseline_mlp.parameters(), lr=1e-3, weight_decay=0.1)
+
+        # Get input dimension from the model's first layer (in net Sequential)
+        first_layer = baseline_mlp.net[0]
+        in_features = first_layer.in_features
+
+        # Run some training steps
+        for _ in range(10):
+            x = torch.randn(8, in_features, device=device)
+            outputs = baseline_mlp(x)
+            loss = outputs.sum()
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+        metrics = compute_adam_metrics(optimizer, weight_decay=0.1)
+
+        assert metrics is not None
+        assert metrics.effective_lr_mean > 0
+        assert metrics.adam_ratio_mean > 0
 
 

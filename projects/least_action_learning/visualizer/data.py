@@ -1,7 +1,8 @@
 """Data loading utilities for experiment visualization."""
 
 import json
-from dataclasses import dataclass, asdict
+import yaml
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +22,7 @@ class ExperimentRun:
     p: int  # Prime modulus from config
     n_layers: int
     n_heads: int
+    group: str = "no group"  # Experiment group from sweep config
 
     @property
     def has_routing(self) -> bool:
@@ -38,6 +40,84 @@ def get_default_output_dir() -> Path:
     # Look relative to this file's location
     project_root = Path(__file__).parent.parent
     return project_root / "outputs"
+
+
+def get_configs_dir() -> Path:
+    """Get the configs directory containing sweep files."""
+    project_root = Path(__file__).parent.parent
+    return project_root / "configs"
+
+
+# Cache for sweep groups mapping
+_sweep_groups_cache: Optional[dict[str, str]] = None
+
+
+def load_sweep_groups(force_reload: bool = False) -> dict[str, str]:
+    """
+    Parse sweep configs to build experiment name -> group mapping.
+
+    Scans all *_sweep.yaml and *_sweep.yml files in the configs directory
+    and builds a mapping from experiment names to sweep group names.
+
+    Args:
+        force_reload: If True, clear cache and reload from disk
+
+    Returns:
+        Dict mapping experiment name to group name.
+        E.g., {"p17_lr3e-4_wd0.5": "transformer_sweep"}
+    """
+    global _sweep_groups_cache
+
+    if _sweep_groups_cache is not None and not force_reload:
+        return _sweep_groups_cache
+
+    groups: dict[str, str] = {}
+    configs_dir = get_configs_dir()
+
+    if not configs_dir.exists():
+        _sweep_groups_cache = groups
+        return groups
+
+    # Find all sweep config files
+    sweep_files = list(configs_dir.glob("*_sweep.yaml")) + list(configs_dir.glob("*_sweep.yml"))
+
+    for config_file in sweep_files:
+        sweep_name = config_file.stem  # e.g., "transformer_sweep"
+
+        try:
+            with open(config_file) as f:
+                sweep_config = yaml.safe_load(f)
+        except Exception as e:
+            print(f"Warning: Failed to load sweep config {config_file}: {e}")
+            continue
+
+        if sweep_config is None:
+            continue
+
+        # Extract experiment names from the experiments list
+        experiments = sweep_config.get("experiments", [])
+        for exp_params in experiments:
+            if isinstance(exp_params, dict):
+                exp_name = exp_params.get("name")
+                if exp_name:
+                    groups[exp_name] = sweep_name
+
+    _sweep_groups_cache = groups
+    return groups
+
+
+def get_experiment_group(exp_name: str) -> str:
+    """
+    Get the group name for an experiment.
+
+    Args:
+        exp_name: Experiment directory name
+
+    Returns:
+        Group name from sweep config, or "no group" if not in any sweep
+    """
+    groups = load_sweep_groups()
+    return groups.get(exp_name, "no group")
 
 
 def discover_experiments(output_dir: Optional[Path] = None) -> list[Path]:
@@ -112,6 +192,9 @@ def load_experiment(exp_dir: Path) -> ExperimentRun:
     n_layers = config.get("n_layers", 4)
     n_heads = config.get("n_heads", 4)
 
+    # Get experiment group from sweep configs
+    group = get_experiment_group(exp_dir.name)
+
     return ExperimentRun(
         name=exp_dir.name,
         config=config,
@@ -121,6 +204,7 @@ def load_experiment(exp_dir: Path) -> ExperimentRun:
         p=p,
         n_layers=n_layers,
         n_heads=n_heads,
+        group=group,
     )
 
 
@@ -198,6 +282,7 @@ class GrokkingAnalysis:
     """Grokking quality metrics for one experiment."""
 
     name: str
+    group: str  # Experiment group from sweep config
     p: int
     lr: float
     weight_decay: float
@@ -259,6 +344,7 @@ def analyze_grokking(
 
     return GrokkingAnalysis(
         name=experiment.name,
+        group=experiment.group,
         p=experiment.p,
         lr=experiment.config.get("lr", 0),
         weight_decay=experiment.config.get("weight_decay", 0),
