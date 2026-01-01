@@ -105,6 +105,7 @@ python -m projects.least_action_learning.visualizer
 - Causal attention masking
 - Predicts result class from last position hidden state
 - Pre-norm (LayerNorm before attention/FFN)
+- Optional weight tying: `tie_embeddings: true` ties output projection to input embedding (first p rows), reducing parameters by ~14k for d_model=128
 
 ## Configuration System
 
@@ -121,6 +122,7 @@ model_type: "transformer"  # "baseline", "routed", "transformer"
 hidden_dim: 128          # d_model for transformer
 n_layers: 2              # Number of layers/blocks
 n_heads: 4               # Attention heads (transformer) or routing heads
+tie_embeddings: false    # Tie output projection to input embedding (transformer)
 
 # Training
 epochs: 100000

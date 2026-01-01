@@ -262,6 +262,10 @@ class GrokTransformer(nn.Module):
         output_dim: Output dimension (p classes for result)
         max_seq_len: Maximum sequence length (default 5 for [a,op,b,=,result])
         dropout: Dropout probability (default 0.0 for grokking)
+        tie_embeddings: If True, tie output projection weights to input embedding.
+            Uses the first output_dim rows of token_embedding as the output
+            projection matrix (transposed). This reduces parameters and can
+            improve generalization. Default: False.
     """
 
     def __init__(
@@ -273,6 +277,7 @@ class GrokTransformer(nn.Module):
         output_dim: int,
         max_seq_len: int = 5,
         dropout: float = 0.0,
+        tie_embeddings: bool = False,
     ):
         super().__init__()
         self.vocab_size = vocab_size
@@ -281,6 +286,7 @@ class GrokTransformer(nn.Module):
         self.n_layers = n_layers
         self.output_dim = output_dim
         self.max_seq_len = max_seq_len
+        self.tie_embeddings = tie_embeddings
 
         # Token and position embeddings
         self.token_embedding = nn.Embedding(vocab_size, d_model)
@@ -296,7 +302,12 @@ class GrokTransformer(nn.Module):
         self.ln_f = nn.LayerNorm(d_model)
 
         # Output head (predicts result class, not next token)
-        self.output_head = nn.Linear(d_model, output_dim)
+        # If tie_embeddings=True, we use the token embedding weights instead
+        if tie_embeddings:
+            # No separate output head - we'll use F.linear with embedding weights
+            self.output_head = None
+        else:
+            self.output_head = nn.Linear(d_model, output_dim)
 
         # Causal mask
         self.register_buffer(
@@ -317,6 +328,28 @@ class GrokTransformer(nn.Module):
                 nn.init.normal_(module.weight, mean=0.0, std=init_std)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
+
+    def _compute_logits(self, hidden: Tensor) -> Tensor:
+        """Compute output logits from hidden state.
+
+        If tie_embeddings=True, uses the first output_dim rows of the token
+        embedding as the output projection (no bias). Otherwise uses output_head.
+
+        Args:
+            hidden: Hidden state [batch, d_model]
+
+        Returns:
+            logits: Output logits [batch, output_dim]
+        """
+        if self.tie_embeddings:
+            # Use first output_dim rows of embedding as output projection
+            # embedding.weight: [vocab_size, d_model]
+            # We want: hidden @ embedding[:output_dim].T -> [batch, output_dim]
+            return nn.functional.linear(
+                hidden, self.token_embedding.weight[:self.output_dim]
+            )
+        else:
+            return self.output_head(hidden)
 
     def forward(self, input_ids: Tensor) -> Tensor:
         """
@@ -346,7 +379,7 @@ class GrokTransformer(nn.Module):
 
         # Get logits from last position only
         last_hidden = x[:, -1, :]  # [batch, d_model]
-        logits = self.output_head(last_hidden)  # [batch, output_dim]
+        logits = self._compute_logits(last_hidden)  # [batch, output_dim]
 
         return logits
 
@@ -411,7 +444,7 @@ class GrokTransformer(nn.Module):
 
         # Get logits from last position only
         last_hidden = x[:, -1, :]  # [batch, d_model]
-        logits = self.output_head(last_hidden)  # [batch, output_dim]
+        logits = self._compute_logits(last_hidden)  # [batch, output_dim]
 
         return logits
 
@@ -543,6 +576,7 @@ def create_model(
             output_dim=output_dim,
             max_seq_len=kwargs.get("max_seq_len", 5),
             dropout=kwargs.get("dropout", 0.0),
+            tie_embeddings=kwargs.get("tie_embeddings", False),
         )
     else:
         raise ValueError(f"Unknown model type: {model_type}")

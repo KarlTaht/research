@@ -48,6 +48,7 @@ class TrainerConfig:
     hidden_dim: int = 128
     n_layers: int = 4
     n_heads: int = 4
+    tie_embeddings: bool = False  # Tie output projection to input embedding (transformer only)
 
     # Training
     epochs: int = 50000
@@ -484,6 +485,7 @@ class Trainer:
             output_dim=self.dataset.output_dim,
             n_layers=config.n_layers,
             n_heads=config.n_heads,
+            tie_embeddings=config.tie_embeddings,
         ).to(self.device)
 
         # Create optimizer
