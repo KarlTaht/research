@@ -16,10 +16,9 @@ from .data import (
     load_experiment,
     load_sweep_groups,
 )
-from .plots import (
-    create_empty_figure,
-    create_grokking_summary_table,
-)
+from .plots import create_grokking_summary_table
+from .helpers import create_empty_figure, filter_by_epoch_range, get_valid_data
+from .styles import CATEGORICAL_COLORS
 
 
 # Cache for loaded experiments
@@ -214,17 +213,6 @@ def get_layer_choices(exp: ExperimentRun, metric_suffix: str = "weight_norm") ->
         choices.append(f"{layer_num}:{display_name}")
 
     return choices
-
-
-def filter_by_epoch_range(
-    df: pd.DataFrame,
-    min_epoch: int,
-    max_epoch: int,
-) -> pd.DataFrame:
-    """Filter DataFrame by epoch range."""
-    if df.empty or "step" not in df.columns:
-        return df
-    return df[(df["step"] >= min_epoch) & (df["step"] <= max_epoch)]
 
 
 def create_single_metric_plot(
@@ -536,22 +524,12 @@ def create_weight_group_plot(
     """
     df = filter_by_epoch_range(df, min_epoch, max_epoch)
 
-    # Color palette
-    colors = [
-        "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
-        "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
-    ]
-
     fig = go.Figure()
     has_data = False
 
     for i, (layer_idx, name) in enumerate(zip(layer_indices, layer_names)):
         col = f"layer_{layer_idx}_weight_norm"
-        if col not in df.columns:
-            continue
-
-        y_data = df[col]
-        valid_mask = y_data.notna() & np.isfinite(y_data)
+        y_data, valid_mask = get_valid_data(df, col)
 
         if valid_mask.any():
             has_data = True
@@ -561,7 +539,7 @@ def create_weight_group_plot(
                     y=df.loc[valid_mask, col],
                     mode="lines",
                     name=name,
-                    line=dict(color=colors[i % len(colors)], width=2),
+                    line=dict(color=CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)], width=2),
                     hovertemplate=f"{name}<br>Step: %{{x}}<br>Norm: %{{y:.4g}}<extra></extra>",
                 )
             )
@@ -636,14 +614,6 @@ def create_per_layer_metric_plot(
 
     fig = go.Figure()
 
-    # Extended color palette for many layers
-    colors = [
-        "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
-        "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
-        "#bcbd22", "#17becf", "#aec7e8", "#ffbb78",
-        "#98df8a", "#ff9896", "#c5b0d5", "#c49c94",
-    ]
-
     # Parse selected layer (format: "idx:name" or "All")
     selected_idx = None
     if selected_layer != "All" and ":" in selected_layer:
@@ -661,8 +631,7 @@ def create_per_layer_metric_plot(
         # Get descriptive name for legend
         display_name = get_layer_display_name(layer_num, exp)
 
-        y_data = df[col]
-        valid_mask = y_data.notna() & np.isfinite(y_data)
+        y_data, valid_mask = get_valid_data(df, col)
 
         if valid_mask.any():
             fig.add_trace(
@@ -671,7 +640,7 @@ def create_per_layer_metric_plot(
                     y=df.loc[valid_mask, col],
                     mode="lines",
                     name=display_name,
-                    line=dict(color=colors[i % len(colors)], width=2),
+                    line=dict(color=CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)], width=2),
                 )
             )
 
@@ -784,73 +753,59 @@ def update_weight_plots(
     - Block 1 Attention (Q, K, V, Wo)
     - Block 1 FFN (up, down)
     - Output head
+
+    Note: UI currently supports 2 blocks. To support more blocks,
+    update the UI layout in create_app() as well.
     """
+    # UI currently hardcoded for 2 blocks (4 block plots + embed + output = 6)
+    n_ui_blocks = 2
+    n_plots = 2 + n_ui_blocks * 2  # embed + blocks*2 + output
+
     if not exp_path:
         empty = create_empty_figure("Select an experiment")
-        return (empty,) * 6
+        return (empty,) * n_plots
 
     exp = get_experiment(exp_path)
     if exp is None:
         empty = create_empty_figure("Failed to load experiment")
-        return (empty,) * 6
+        return (empty,) * n_plots
 
     df = exp.history_df
     n_layers = exp.config.get("n_layers", exp.n_layers)
     groups = get_weight_group_indices(n_layers)
 
-    # Embeddings plot
+    # Embeddings plot (always first)
     emb_indices, emb_names = groups["embeddings"]
     embed_fig = create_weight_group_plot(
         df, emb_indices, emb_names, "Embeddings",
         min_epoch=min_epoch, max_epoch=max_epoch
     )
 
-    # Block 0 plots
-    if "block0_attn" in groups:
-        b0_attn_idx, b0_attn_names = groups["block0_attn"]
-        b0_attn_fig = create_weight_group_plot(
-            df, b0_attn_idx, b0_attn_names, "Block 0: Attention",
-            min_epoch=min_epoch, max_epoch=max_epoch
-        )
-    else:
-        b0_attn_fig = create_empty_figure("No Block 0 attention data")
+    # Block plots via loop (attention then FFN for each block)
+    block_figs = []
+    component_names = {"attn": "Attention", "ffn": "FFN"}
+    for block_idx in range(n_ui_blocks):
+        for component in ["attn", "ffn"]:
+            key = f"block{block_idx}_{component}"
+            if key in groups:
+                indices, names = groups[key]
+                fig = create_weight_group_plot(
+                    df, indices, names,
+                    f"Block {block_idx}: {component_names[component]}",
+                    min_epoch=min_epoch, max_epoch=max_epoch
+                )
+            else:
+                fig = create_empty_figure(f"No Block {block_idx} {component} data")
+            block_figs.append(fig)
 
-    if "block0_ffn" in groups:
-        b0_ffn_idx, b0_ffn_names = groups["block0_ffn"]
-        b0_ffn_fig = create_weight_group_plot(
-            df, b0_ffn_idx, b0_ffn_names, "Block 0: FFN",
-            min_epoch=min_epoch, max_epoch=max_epoch
-        )
-    else:
-        b0_ffn_fig = create_empty_figure("No Block 0 FFN data")
-
-    # Block 1 plots
-    if "block1_attn" in groups:
-        b1_attn_idx, b1_attn_names = groups["block1_attn"]
-        b1_attn_fig = create_weight_group_plot(
-            df, b1_attn_idx, b1_attn_names, "Block 1: Attention",
-            min_epoch=min_epoch, max_epoch=max_epoch
-        )
-    else:
-        b1_attn_fig = create_empty_figure("No Block 1 attention data")
-
-    if "block1_ffn" in groups:
-        b1_ffn_idx, b1_ffn_names = groups["block1_ffn"]
-        b1_ffn_fig = create_weight_group_plot(
-            df, b1_ffn_idx, b1_ffn_names, "Block 1: FFN",
-            min_epoch=min_epoch, max_epoch=max_epoch
-        )
-    else:
-        b1_ffn_fig = create_empty_figure("No Block 1 FFN data")
-
-    # Output head plot
+    # Output head plot (always last)
     out_indices, out_names = groups["output"]
     output_fig = create_weight_group_plot(
         df, out_indices, out_names, "Output Head",
         min_epoch=min_epoch, max_epoch=max_epoch
     )
 
-    return embed_fig, b0_attn_fig, b0_ffn_fig, b1_attn_fig, b1_ffn_fig, output_fig
+    return (embed_fig, *block_figs, output_fig)
 
 
 def update_curvature_plots(
@@ -933,31 +888,29 @@ def update_adam_plots(
         return empty, empty, empty
 
     df = exp.history_df
+    filtered_df = filter_by_epoch_range(df, min_epoch, max_epoch)
 
     # Effective LR plot (show both mean and max on same plot)
     effective_lr_fig = go.Figure()
     has_eff_lr_data = False
 
     for metric, name, color in [
-        ("effective_lr_mean", "Mean", "#1f77b4"),
-        ("effective_lr_max", "Max", "#ff7f0e"),
+        ("effective_lr_mean", "Mean", CATEGORICAL_COLORS[0]),
+        ("effective_lr_max", "Max", CATEGORICAL_COLORS[1]),
     ]:
-        if metric in df.columns:
-            filtered_df = filter_by_epoch_range(df, min_epoch, max_epoch)
-            y_data = filtered_df[metric]
-            valid_mask = y_data.notna() & np.isfinite(y_data)
-            if valid_mask.any():
-                has_eff_lr_data = True
-                effective_lr_fig.add_trace(
-                    go.Scatter(
-                        x=filtered_df.loc[valid_mask, "step"],
-                        y=filtered_df.loc[valid_mask, metric],
-                        mode="lines",
-                        name=name,
-                        line=dict(color=color, width=2),
-                        hovertemplate=f"{name}<br>Step: %{{x}}<br>√v: %{{y:.4g}}<extra></extra>",
-                    )
+        y_data, valid_mask = get_valid_data(filtered_df, metric)
+        if valid_mask.any():
+            has_eff_lr_data = True
+            effective_lr_fig.add_trace(
+                go.Scatter(
+                    x=filtered_df.loc[valid_mask, "step"],
+                    y=filtered_df.loc[valid_mask, metric],
+                    mode="lines",
+                    name=name,
+                    line=dict(color=color, width=2),
+                    hovertemplate=f"{name}<br>Step: %{{x}}<br>√v: %{{y:.4g}}<extra></extra>",
                 )
+            )
 
     if not has_eff_lr_data:
         effective_lr_fig = create_empty_figure("No effective LR data")

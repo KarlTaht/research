@@ -9,40 +9,18 @@ from plotly.subplots import make_subplots
 import torch
 from torch import Tensor
 
+from .styles import (
+    CATEGORICAL_COLORS,
+    HEAD_COLORS,
+    METRIC_DISPLAY_NAMES,
+    LOG_SCALE_METRICS,
+    get_metric_display_name,
+    should_use_log_scale,
+)
+from .helpers import create_empty_figure, get_valid_data, filter_by_epoch_range
+
 if TYPE_CHECKING:
     from .data import ExperimentRun
-
-# Color palette for heads (categorical)
-HEAD_COLORS = [
-    "#1f77b4",  # blue
-    "#ff7f0e",  # orange
-    "#2ca02c",  # green
-    "#d62728",  # red
-    "#9467bd",  # purple
-    "#8c564b",  # brown
-    "#e377c2",  # pink
-    "#7f7f7f",  # gray
-]
-
-
-def create_empty_figure(message: str = "No data available") -> go.Figure:
-    """Create an empty figure with a message."""
-    fig = go.Figure()
-    fig.add_annotation(
-        text=message,
-        xref="paper",
-        yref="paper",
-        x=0.5,
-        y=0.5,
-        showarrow=False,
-        font=dict(size=16, color="gray"),
-    )
-    fig.update_layout(
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
-        plot_bgcolor="white",
-    )
-    return fig
 
 
 def create_training_curves(history_df: pd.DataFrame) -> go.Figure:
@@ -608,60 +586,44 @@ def create_accuracy_comparison(
     if not experiments:
         return create_empty_figure("Select experiments to compare")
 
-    # Color palette for comparison
-    colors = [
-        "#1f77b4",  # blue
-        "#ff7f0e",  # orange
-        "#2ca02c",  # green
-        "#d62728",  # red
-        "#9467bd",  # purple
-        "#8c564b",  # brown
-        "#e377c2",  # pink
-        "#7f7f7f",  # gray
-    ]
-
     fig = go.Figure()
     has_data = False
 
     for i, exp in enumerate(experiments):
-        color = colors[i % len(colors)]
+        color = CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
         df = exp.history_df
 
         # Plot train accuracy (solid line)
-        if "train_acc" in df.columns:
-            y_data = df["train_acc"]
-            valid_mask = y_data.notna() & np.isfinite(y_data)
-            if valid_mask.any():
-                has_data = True
-                fig.add_trace(
-                    go.Scatter(
-                        x=df.loc[valid_mask, "step"],
-                        y=df.loc[valid_mask, "train_acc"],
-                        mode="lines",
-                        name=f"{exp.name} (train)",
-                        line=dict(color=color, width=2),
-                        legendgroup=exp.name,
-                        hovertemplate=f"{exp.name}<br>Step: %{{x}}<br>Train: %{{y:.2%}}<extra></extra>",
-                    )
+        y_data, valid_mask = get_valid_data(df, "train_acc")
+        if valid_mask.any():
+            has_data = True
+            fig.add_trace(
+                go.Scatter(
+                    x=df.loc[valid_mask, "step"],
+                    y=df.loc[valid_mask, "train_acc"],
+                    mode="lines",
+                    name=f"{exp.name} (train)",
+                    line=dict(color=color, width=2),
+                    legendgroup=exp.name,
+                    hovertemplate=f"{exp.name}<br>Step: %{{x}}<br>Train: %{{y:.2%}}<extra></extra>",
                 )
+            )
 
         # Plot test accuracy (dashed line)
-        if "test_acc" in df.columns:
-            y_data = df["test_acc"]
-            valid_mask = y_data.notna() & np.isfinite(y_data)
-            if valid_mask.any():
-                has_data = True
-                fig.add_trace(
-                    go.Scatter(
-                        x=df.loc[valid_mask, "step"],
-                        y=df.loc[valid_mask, "test_acc"],
-                        mode="lines",
-                        name=f"{exp.name} (test)",
-                        line=dict(color=color, width=2, dash="dash"),
-                        legendgroup=exp.name,
-                        hovertemplate=f"{exp.name}<br>Step: %{{x}}<br>Test: %{{y:.2%}}<extra></extra>",
-                    )
+        y_data, valid_mask = get_valid_data(df, "test_acc")
+        if valid_mask.any():
+            has_data = True
+            fig.add_trace(
+                go.Scatter(
+                    x=df.loc[valid_mask, "step"],
+                    y=df.loc[valid_mask, "test_acc"],
+                    mode="lines",
+                    name=f"{exp.name} (test)",
+                    line=dict(color=color, width=2, dash="dash"),
+                    legendgroup=exp.name,
+                    hovertemplate=f"{exp.name}<br>Step: %{{x}}<br>Test: %{{y:.2%}}<extra></extra>",
                 )
+            )
 
     if not has_data:
         return create_empty_figure("No accuracy data")
@@ -719,62 +681,18 @@ def create_multi_experiment_comparison(
     if not experiments:
         return create_empty_figure("Select experiments to compare")
 
-    # Color palette for comparison
-    colors = [
-        "#1f77b4",  # blue
-        "#ff7f0e",  # orange
-        "#2ca02c",  # green
-        "#d62728",  # red
-        "#9467bd",  # purple
-        "#8c564b",  # brown
-        "#e377c2",  # pink
-        "#7f7f7f",  # gray
-    ]
-
-    # Metric display names
-    metric_names = {
-        "test_acc": "Test Accuracy",
-        "train_acc": "Train Accuracy",
-        "test_loss": "Test Loss",
-        "train_loss": "Train Loss",
-        "total_weight_norm": "Weight Norm",
-        "jacobian_norm": "Jacobian Norm",
-        "hessian_trace": "Hessian Trace",
-        "representation_norm": "Representation Norm",
-        "spectral_smoothness": "Spectral Smoothness",
-        # Weight-curvature metrics (loss landscape)
-        "gradient_norm": "Gradient Norm (||∇_w L||)",
-        "weight_hessian_trace": "Weight Hessian Trace",
-        "fisher_trace": "Fisher Trace",
-        # Adam optimizer dynamics
-        "effective_lr_mean": "Effective LR (mean √v)",
-        "effective_lr_max": "Effective LR (max √v)",
-        "adam_ratio_mean": "Adam Ratio (mean)",
-        "adam_ratio_max": "Adam Ratio (max)",
-        "update_decay_ratio": "Update/Decay Ratio",
-    }
-
-    # Metrics that should use log scale
-    log_scale_metrics = {
-        "test_loss", "train_loss", "jacobian_norm",
-        "gradient_norm", "weight_hessian_trace", "fisher_trace",
-        "effective_lr_mean", "effective_lr_max",
-        "adam_ratio_mean", "adam_ratio_max", "update_decay_ratio",
-    }
-
     fig = go.Figure()
     has_data = False
 
     for i, exp in enumerate(experiments):
-        color = colors[i % len(colors)]
+        color = CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
         df = exp.history_df
 
         if metric not in df.columns:
             continue
 
         # Filter out NaN/inf values for cleaner plots
-        y_data = df[metric]
-        valid_mask = y_data.notna() & np.isfinite(y_data)
+        y_data, valid_mask = get_valid_data(df, metric)
 
         if not valid_mask.any():
             continue
@@ -812,8 +730,8 @@ def create_multi_experiment_comparison(
                 annotation_position="right",
             )
 
-    # Format title
-    metric_display = metric_names.get(metric, metric.replace("_", " ").title())
+    # Format title using centralized metric names
+    metric_display = get_metric_display_name(metric)
 
     fig.update_layout(
         title=metric_display,
@@ -833,7 +751,7 @@ def create_multi_experiment_comparison(
     # Set appropriate y-axis settings
     if metric in ("test_acc", "train_acc"):
         fig.update_yaxes(range=[0, 1.05])
-    elif metric in log_scale_metrics:
+    elif should_use_log_scale(metric):
         fig.update_yaxes(type="log")
 
     return fig

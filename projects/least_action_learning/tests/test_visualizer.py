@@ -153,8 +153,8 @@ class TestUpdateFunctions:
         """Test update_all_plots handles None path."""
         result = update_all_plots(None, 0, 10000, 'All')
 
-        # 3 dynamics + 6 weight + 5 curvature = 14 total
-        assert len(result) == 14
+        # 3 dynamics + 6 weight + 5 curvature + 3 adam = 17 total
+        assert len(result) == 17
 
     def test_update_experiment_controls_with_none_path(self):
         """Test update_experiment_controls handles None path."""
