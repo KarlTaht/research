@@ -9,14 +9,18 @@ import torch
 
 from .data import (
     ExperimentRun,
+    analyze_all_experiments,
     discover_experiments,
     get_experiment_display_name,
     get_routing_at_step,
     load_experiment,
 )
 from .plots import (
+    create_accuracy_comparison,
     create_empty_figure,
+    create_grokking_summary_table,
     create_head_utilization,
+    create_multi_experiment_comparison,
     create_routing_entropy_curve,
     create_routing_heatmap,
     create_spectral_plot,
@@ -171,6 +175,87 @@ def update_heatmaps(exp_path: str, layer_idx: int, step_percent: float) -> Tuple
     return heatmap_fig, utilization_fig
 
 
+def load_all_experiments() -> dict[str, ExperimentRun]:
+    """Load all experiments into cache and return the cache."""
+    experiments = discover_experiments()
+    for exp_path in experiments:
+        path_str = str(exp_path)
+        if path_str not in _experiment_cache:
+            try:
+                _experiment_cache[path_str] = load_experiment(exp_path)
+            except Exception as e:
+                print(f"Failed to load experiment {exp_path}: {e}")
+    return _experiment_cache
+
+
+def update_grokking_analysis() -> Tuple:
+    """
+    Update the grokking quality analysis table and experiment choices.
+
+    Returns:
+        Tuple of (table_fig, experiment_choices)
+    """
+    experiments = load_all_experiments()
+
+    if not experiments:
+        empty = create_empty_figure("No experiments found")
+        return empty, gr.update(choices=[])
+
+    # Analyze all experiments (returns DataFrame sorted by clean + variance)
+    analysis_df = analyze_all_experiments(experiments)
+    table_fig = create_grokking_summary_table(analysis_df)
+
+    # Create name -> path mapping
+    name_to_path = {exp.name: path for path, exp in experiments.items()}
+
+    # Create choices in rank order with rank labels
+    choices = []
+    for rank, row in enumerate(analysis_df.itertuples(), start=1):
+        name = row.name
+        path = name_to_path.get(name)
+        if path:
+            label = f"#{rank} {name}"
+            choices.append((label, path))
+
+    return table_fig, gr.update(choices=choices)
+
+
+def update_all_comparisons(selected_paths: list[str]) -> Tuple:
+    """
+    Update all multi-experiment comparison plots.
+
+    Args:
+        selected_paths: List of experiment path strings
+
+    Returns:
+        Tuple of 6 Plotly figures (acc, loss, wnorm, jacobian, hessian, repnorm)
+    """
+    empty = create_empty_figure("Select experiments to compare")
+
+    if not selected_paths:
+        return empty, empty, empty, empty, empty, empty
+
+    # Load selected experiments
+    experiments = []
+    for path in selected_paths:
+        exp = get_experiment(path)
+        if exp is not None:
+            experiments.append(exp)
+
+    if not experiments:
+        return empty, empty, empty, empty, empty, empty
+
+    # Create all comparison plots
+    acc_fig = create_accuracy_comparison(experiments)  # Train + Test accuracy
+    loss_fig = create_multi_experiment_comparison(experiments, "test_loss")
+    wnorm_fig = create_multi_experiment_comparison(experiments, "total_weight_norm")
+    jacobian_fig = create_multi_experiment_comparison(experiments, "jacobian_norm")
+    hessian_fig = create_multi_experiment_comparison(experiments, "hessian_trace")
+    repnorm_fig = create_multi_experiment_comparison(experiments, "representation_norm")
+
+    return acc_fig, loss_fig, wnorm_fig, jacobian_fig, hessian_fig, repnorm_fig
+
+
 def create_spectral_from_experiment(exp: ExperimentRun):
     """
     Create spectral plot by running inference on the model.
@@ -301,6 +386,38 @@ def create_app() -> gr.Blocks:
             )
             spectral_plot = gr.Plot(label="Output Function & Power Spectrum")
 
+        # ─── Grokking Quality Analysis ───
+        gr.Markdown("## Grokking Quality Analysis")
+        gr.Markdown(
+            "*Compare all experiments by grokking quality. "
+            "Shows % of training steps where train≥98% and test≥95%. "
+            "Sorted by test%, then train%.*"
+        )
+
+        grokking_table = gr.Plot(label="Grokking Quality Summary")
+
+        gr.Markdown("### Compare Experiments")
+        experiment_checkboxes = gr.CheckboxGroup(
+            choices=[],
+            label="Select experiments to compare",
+            info="Select experiments to overlay their metrics (ordered by grokking quality)",
+        )
+
+        # Accuracy comparison
+        comparison_acc_plot = gr.Plot(label="Test Accuracy Comparison")
+
+        # Loss comparison
+        comparison_loss_plot = gr.Plot(label="Loss Comparison (log scale)")
+
+        # Additional metrics in a row
+        with gr.Row():
+            comparison_wnorm_plot = gr.Plot(label="Weight Norm")
+            comparison_jacobian_plot = gr.Plot(label="Jacobian Norm")
+
+        with gr.Row():
+            comparison_hessian_plot = gr.Plot(label="Hessian Trace")
+            comparison_repnorm_plot = gr.Plot(label="Representation Norm")
+
         # ─── Event Handlers ───
         exp_dropdown.change(
             fn=update_all_plots,
@@ -316,9 +433,15 @@ def create_app() -> gr.Blocks:
             ],
         )
 
+        def refresh_all():
+            """Refresh experiments and update grokking analysis."""
+            dropdown_update = refresh_experiments()
+            table_fig, checkboxes_update = update_grokking_analysis()
+            return dropdown_update, table_fig, checkboxes_update
+
         refresh_btn.click(
-            fn=refresh_experiments,
-            outputs=[exp_dropdown],
+            fn=refresh_all,
+            outputs=[exp_dropdown, grokking_table, experiment_checkboxes],
         )
 
         # Update heatmaps when sliders change
@@ -332,6 +455,26 @@ def create_app() -> gr.Blocks:
             fn=update_heatmaps,
             inputs=[exp_dropdown, layer_slider, step_slider],
             outputs=[heatmap_plot, utilization_plot],
+        )
+
+        # ─── Grokking Analysis Event Handlers ───
+        experiment_checkboxes.change(
+            fn=update_all_comparisons,
+            inputs=[experiment_checkboxes],
+            outputs=[
+                comparison_acc_plot,
+                comparison_loss_plot,
+                comparison_wnorm_plot,
+                comparison_jacobian_plot,
+                comparison_hessian_plot,
+                comparison_repnorm_plot,
+            ],
+        )
+
+        # Initialize grokking analysis on app load
+        app.load(
+            fn=update_grokking_analysis,
+            outputs=[grokking_table, experiment_checkboxes],
         )
 
     return app

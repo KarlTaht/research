@@ -1,6 +1,6 @@
 """Plotly visualization functions for routing analysis."""
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import pandas as pd
@@ -8,6 +8,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import torch
 from torch import Tensor
+
+if TYPE_CHECKING:
+    from .data import ExperimentRun
 
 # Color palette for heads (categorical)
 HEAD_COLORS = [
@@ -44,45 +47,26 @@ def create_empty_figure(message: str = "No data available") -> go.Figure:
 
 def create_training_curves(history_df: pd.DataFrame) -> go.Figure:
     """
-    Create dual-axis plot of loss and accuracy over training.
+    Create stacked plots of accuracy (top) and loss (bottom) over training.
 
     Args:
         history_df: DataFrame with step, train_loss, test_loss, train_acc, test_acc
 
     Returns:
-        Plotly figure
+        Plotly figure with two subplots
     """
     if history_df.empty:
         return create_empty_figure("No training history")
 
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-    # Loss curves (left y-axis)
-    fig.add_trace(
-        go.Scatter(
-            x=history_df["step"],
-            y=history_df["train_loss"],
-            mode="lines",
-            name="Train Loss",
-            line=dict(color="#1f77b4", width=2),
-            hovertemplate="Step: %{x}<br>Train Loss: %{y:.4f}<extra></extra>",
-        ),
-        secondary_y=False,
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=("Accuracy", "Loss"),
     )
 
-    fig.add_trace(
-        go.Scatter(
-            x=history_df["step"],
-            y=history_df["test_loss"],
-            mode="lines",
-            name="Test Loss",
-            line=dict(color="#1f77b4", width=2, dash="dash"),
-            hovertemplate="Step: %{x}<br>Test Loss: %{y:.4f}<extra></extra>",
-        ),
-        secondary_y=False,
-    )
-
-    # Accuracy curves (right y-axis)
+    # Accuracy curves (top plot, linear scale)
     fig.add_trace(
         go.Scatter(
             x=history_df["step"],
@@ -92,7 +76,8 @@ def create_training_curves(history_df: pd.DataFrame) -> go.Figure:
             line=dict(color="#2ca02c", width=2),
             hovertemplate="Step: %{x}<br>Train Acc: %{y:.2%}<extra></extra>",
         ),
-        secondary_y=True,
+        row=1,
+        col=1,
     )
 
     fig.add_trace(
@@ -104,26 +89,62 @@ def create_training_curves(history_df: pd.DataFrame) -> go.Figure:
             line=dict(color="#2ca02c", width=2, dash="dash"),
             hovertemplate="Step: %{x}<br>Test Acc: %{y:.2%}<extra></extra>",
         ),
-        secondary_y=True,
+        row=1,
+        col=1,
     )
 
-    # Add 95% accuracy threshold line
+    # Add threshold lines for accuracy
     fig.add_hline(
         y=0.95,
         line_dash="dot",
         line_color="gray",
         annotation_text="95%",
-        secondary_y=True,
+        annotation_position="right",
+        row=1,
+        col=1,
+    )
+
+    # Loss curves (bottom plot, log scale)
+    fig.add_trace(
+        go.Scatter(
+            x=history_df["step"],
+            y=history_df["train_loss"],
+            mode="lines",
+            name="Train Loss",
+            line=dict(color="#1f77b4", width=2),
+            hovertemplate="Step: %{x}<br>Train Loss: %{y:.4f}<extra></extra>",
+        ),
+        row=2,
+        col=1,
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=history_df["step"],
+            y=history_df["test_loss"],
+            mode="lines",
+            name="Test Loss",
+            line=dict(color="#1f77b4", width=2, dash="dash"),
+            hovertemplate="Step: %{x}<br>Test Loss: %{y:.4f}<extra></extra>",
+        ),
+        row=2,
+        col=1,
     )
 
     fig.update_layout(
-        title="Training Curves",
+        height=500,
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-    fig.update_xaxes(title_text="Step")
-    fig.update_yaxes(title_text="Loss", type="log", secondary_y=False)
-    fig.update_yaxes(title_text="Accuracy", range=[0, 1.05], secondary_y=True)
+
+    # Accuracy plot: linear scale, 0-1 range
+    fig.update_yaxes(title_text="Accuracy", range=[0, 1.05], row=1, col=1)
+
+    # Loss plot: log scale
+    fig.update_yaxes(title_text="Loss", type="log", row=2, col=1)
+
+    # Only show x-axis label on bottom plot
+    fig.update_xaxes(title_text="Step", row=2, col=1)
 
     return fig
 
@@ -450,5 +471,328 @@ def create_routing_evolution_comparison(
         title=f"Routing Evolution at Layer {layer_idx}",
         height=300,
     )
+
+    return fig
+
+
+def create_grokking_summary_table(analysis_df: pd.DataFrame) -> go.Figure:
+    """
+    Create interactive Plotly table showing grokking quality for all experiments.
+
+    Args:
+        analysis_df: DataFrame from analyze_all_experiments()
+
+    Returns:
+        Plotly figure with table
+    """
+    if analysis_df.empty:
+        return create_empty_figure("No experiments to analyze")
+
+    # Format columns for display
+    df = analysis_df.copy()
+    df["Train≥98%"] = df["pct_train_above_98"].apply(lambda x: f"{x:.1f}%")
+    df["Test≥95%"] = df["pct_test_above_95"].apply(lambda x: f"{x:.1f}%")
+    df["Final Test"] = (df["final_test_acc"] * 100).round(1).astype(str) + "%"
+    df["Variance"] = df["test_variance"].apply(
+        lambda x: f"{x:.2e}" if pd.notna(x) and x > 0 else "-"
+    )
+    df["Grok Step"] = df["grok_step"].apply(
+        lambda x: str(int(x)) if pd.notna(x) else "-"
+    )
+    df["lr_fmt"] = df["lr"].apply(lambda x: f"{x:.0e}" if x > 0 else "-")
+    df["wd_fmt"] = df["weight_decay"].apply(lambda x: f"{x:.1f}" if x > 0 else "-")
+
+    # Row colors: gradient based on test percentage (green = high, red = low)
+    def get_row_color(pct):
+        if pct >= 90:
+            return "#d4edda"  # Green
+        elif pct >= 70:
+            return "#fff3cd"  # Yellow
+        elif pct >= 50:
+            return "#ffeeba"  # Light orange
+        else:
+            return "#f8d7da"  # Red
+
+    row_colors = [[get_row_color(p) for p in df["pct_test_above_95"]]]
+
+    fig = go.Figure(
+        data=[
+            go.Table(
+                header=dict(
+                    values=[
+                        "Name",
+                        "p",
+                        "lr",
+                        "wd",
+                        "Grok Step",
+                        "Train≥98%",
+                        "Test≥95%",
+                        "Final Test",
+                        "Variance",
+                    ],
+                    fill_color="#343a40",
+                    font=dict(color="white", size=12),
+                    align="left",
+                    height=30,
+                ),
+                cells=dict(
+                    values=[
+                        df["name"],
+                        df["p"],
+                        df["lr_fmt"],
+                        df["wd_fmt"],
+                        df["Grok Step"],
+                        df["Train≥98%"],
+                        df["Test≥95%"],
+                        df["Final Test"],
+                        df["Variance"],
+                    ],
+                    fill_color=row_colors * 9,  # Repeat for all columns
+                    align="left",
+                    height=25,
+                    font=dict(size=11),
+                ),
+            )
+        ]
+    )
+
+    n_rows = len(df)
+    height = max(200, min(600, 60 + n_rows * 28))
+    fig.update_layout(
+        title="Grokking Quality Summary (sorted by % test≥95%, then % train≥98%)",
+        height=height,
+        margin=dict(l=10, r=10, t=40, b=10),
+    )
+
+    return fig
+
+
+def create_accuracy_comparison(
+    experiments: list["ExperimentRun"],
+) -> go.Figure:
+    """
+    Create overlay plot of train and test accuracy from multiple experiments.
+
+    Args:
+        experiments: List of ExperimentRun objects to compare
+
+    Returns:
+        Plotly figure with overlaid train (solid) and test (dashed) curves
+    """
+    if not experiments:
+        return create_empty_figure("Select experiments to compare")
+
+    # Color palette for comparison
+    colors = [
+        "#1f77b4",  # blue
+        "#ff7f0e",  # orange
+        "#2ca02c",  # green
+        "#d62728",  # red
+        "#9467bd",  # purple
+        "#8c564b",  # brown
+        "#e377c2",  # pink
+        "#7f7f7f",  # gray
+    ]
+
+    fig = go.Figure()
+    has_data = False
+
+    for i, exp in enumerate(experiments):
+        color = colors[i % len(colors)]
+        df = exp.history_df
+
+        # Plot train accuracy (solid line)
+        if "train_acc" in df.columns:
+            y_data = df["train_acc"]
+            valid_mask = y_data.notna() & np.isfinite(y_data)
+            if valid_mask.any():
+                has_data = True
+                fig.add_trace(
+                    go.Scatter(
+                        x=df.loc[valid_mask, "step"],
+                        y=df.loc[valid_mask, "train_acc"],
+                        mode="lines",
+                        name=f"{exp.name} (train)",
+                        line=dict(color=color, width=2),
+                        legendgroup=exp.name,
+                        hovertemplate=f"{exp.name}<br>Step: %{{x}}<br>Train: %{{y:.2%}}<extra></extra>",
+                    )
+                )
+
+        # Plot test accuracy (dashed line)
+        if "test_acc" in df.columns:
+            y_data = df["test_acc"]
+            valid_mask = y_data.notna() & np.isfinite(y_data)
+            if valid_mask.any():
+                has_data = True
+                fig.add_trace(
+                    go.Scatter(
+                        x=df.loc[valid_mask, "step"],
+                        y=df.loc[valid_mask, "test_acc"],
+                        mode="lines",
+                        name=f"{exp.name} (test)",
+                        line=dict(color=color, width=2, dash="dash"),
+                        legendgroup=exp.name,
+                        hovertemplate=f"{exp.name}<br>Step: %{{x}}<br>Test: %{{y:.2%}}<extra></extra>",
+                    )
+                )
+
+    if not has_data:
+        return create_empty_figure("No accuracy data")
+
+    # Add threshold lines
+    fig.add_hline(
+        y=0.95,
+        line_dash="dot",
+        line_color="gray",
+        annotation_text="95%",
+        annotation_position="right",
+    )
+    fig.add_hline(
+        y=0.98,
+        line_dash="dot",
+        line_color="lightgray",
+        annotation_text="98%",
+        annotation_position="right",
+    )
+
+    fig.update_layout(
+        title="Accuracy (solid=train, dashed=test)",
+        xaxis_title="Step",
+        yaxis_title="Accuracy",
+        hovermode="x unified",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+        ),
+        height=400,
+    )
+
+    fig.update_yaxes(range=[0, 1.05])
+
+    return fig
+
+
+def create_multi_experiment_comparison(
+    experiments: list["ExperimentRun"],
+    metric: str = "test_acc",
+) -> go.Figure:
+    """
+    Create overlay plot of training curves from multiple experiments.
+
+    Args:
+        experiments: List of ExperimentRun objects to compare
+        metric: Column to plot (test_acc, train_acc, test_loss, total_weight_norm, etc.)
+
+    Returns:
+        Plotly figure with overlaid curves
+    """
+    if not experiments:
+        return create_empty_figure("Select experiments to compare")
+
+    # Color palette for comparison
+    colors = [
+        "#1f77b4",  # blue
+        "#ff7f0e",  # orange
+        "#2ca02c",  # green
+        "#d62728",  # red
+        "#9467bd",  # purple
+        "#8c564b",  # brown
+        "#e377c2",  # pink
+        "#7f7f7f",  # gray
+    ]
+
+    # Metric display names
+    metric_names = {
+        "test_acc": "Test Accuracy",
+        "train_acc": "Train Accuracy",
+        "test_loss": "Test Loss",
+        "train_loss": "Train Loss",
+        "total_weight_norm": "Weight Norm",
+        "jacobian_norm": "Jacobian Norm",
+        "hessian_trace": "Hessian Trace",
+        "representation_norm": "Representation Norm",
+        "spectral_smoothness": "Spectral Smoothness",
+    }
+
+    # Metrics that should use log scale
+    log_scale_metrics = {"test_loss", "train_loss", "jacobian_norm"}
+
+    fig = go.Figure()
+    has_data = False
+
+    for i, exp in enumerate(experiments):
+        color = colors[i % len(colors)]
+        df = exp.history_df
+
+        if metric not in df.columns:
+            continue
+
+        # Filter out NaN/inf values for cleaner plots
+        y_data = df[metric]
+        valid_mask = y_data.notna() & np.isfinite(y_data)
+
+        if not valid_mask.any():
+            continue
+
+        has_data = True
+        fig.add_trace(
+            go.Scatter(
+                x=df.loc[valid_mask, "step"],
+                y=df.loc[valid_mask, metric],
+                mode="lines",
+                name=exp.name,
+                line=dict(color=color, width=2),
+                hovertemplate=f"{exp.name}<br>Step: %{{x}}<br>{metric}: %{{y:.4g}}<extra></extra>",
+            )
+        )
+
+    if not has_data:
+        return create_empty_figure(f"No data for {metric}")
+
+    # Add threshold lines for accuracy metrics
+    if metric in ("test_acc", "train_acc"):
+        fig.add_hline(
+            y=0.95,
+            line_dash="dot",
+            line_color="gray",
+            annotation_text="95%",
+            annotation_position="right",
+        )
+        if metric == "train_acc":
+            fig.add_hline(
+                y=0.98,
+                line_dash="dot",
+                line_color="lightgray",
+                annotation_text="98%",
+                annotation_position="right",
+            )
+
+    # Format title
+    metric_display = metric_names.get(metric, metric.replace("_", " ").title())
+
+    fig.update_layout(
+        title=metric_display,
+        xaxis_title="Step",
+        yaxis_title=metric_display,
+        hovermode="x unified",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+        ),
+        height=350,
+    )
+
+    # Set appropriate y-axis settings
+    if metric in ("test_acc", "train_acc"):
+        fig.update_yaxes(range=[0, 1.05])
+    elif metric in log_scale_metrics:
+        fig.update_yaxes(type="log")
 
     return fig

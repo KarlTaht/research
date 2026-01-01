@@ -31,6 +31,12 @@ from .train_tokenizer import train_custom_tokenizer_from_file
 
 from .pretokenize_dataset import train_custom_tokenizer
 
+from .pretokenize import (
+    pretokenize_dataset,
+    load_pretokenized_dataset,
+    get_pretokenized_path,
+)
+
 __all__ = [
     # HuggingFace utilities
     "download_dataset",
@@ -55,4 +61,8 @@ __all__ = [
     "train_custom_tokenizer",
     "train_custom_tokenizer_from_file",
     "analyze_and_recommend",
+    # Pre-tokenization
+    "pretokenize_dataset",
+    "load_pretokenized_dataset",
+    "get_pretokenized_path",
 ]

@@ -19,6 +19,18 @@ from .training_logger import (
     TRAINING_LOG_SCHEMA,
 )
 
+from .tensorboard_writer import (
+    TensorBoardLogger,
+    get_tensorboard_dir,
+)
+
+from .migrate_to_tensorboard import (
+    migrate_experiment,
+    migrate_all_experiments,
+)
+
+from .wandb_logger import WandbLogger
+
 __all__ = [
     # Experiment storage
     "save_experiment",
@@ -35,4 +47,11 @@ __all__ = [
     "estimate_flops_per_step",
     "format_flops",
     "TRAINING_LOG_SCHEMA",
+    # TensorBoard
+    "TensorBoardLogger",
+    "get_tensorboard_dir",
+    "migrate_experiment",
+    "migrate_all_experiments",
+    # W&B
+    "WandbLogger",
 ]

@@ -83,6 +83,10 @@ class TrainingLogger:
         model_config: dict,
         train_config: dict,
         log_every_n_steps: int = 100,
+        enable_tensorboard: bool = True,
+        tensorboard_dir: Optional[str] = None,
+        enable_wandb: bool = False,
+        wandb_project: Optional[str] = None,
     ):
         """
         Initialize TrainingLogger.
@@ -92,6 +96,10 @@ class TrainingLogger:
             model_config: Model configuration (saved as metadata)
             train_config: Training configuration (saved as metadata)
             log_every_n_steps: Log metrics every N steps (0 = log every step)
+            enable_tensorboard: Whether to log to TensorBoard (default: True)
+            tensorboard_dir: Override TensorBoard log directory
+            enable_wandb: Whether to log to Weights & Biases (default: False)
+            wandb_project: W&B project name (default: "ml-research")
         """
         self.run_id = str(uuid.uuid4())[:8]
         self.experiment_name = experiment_name
@@ -103,6 +111,33 @@ class TrainingLogger:
         self.global_step = 0
         self.epoch_losses: List[float] = []
         self._last_logged_step = -1
+
+        # Initialize TensorBoard logger
+        self.tensorboard_enabled = enable_tensorboard
+        self.tb_logger = None
+        if enable_tensorboard:
+            from .tensorboard_writer import TensorBoardLogger
+
+            self.tb_logger = TensorBoardLogger(
+                experiment_name=experiment_name,
+                run_id=self.run_id,
+                log_dir=Path(tensorboard_dir) if tensorboard_dir else None,
+                model_config=model_config,
+                train_config=train_config,
+            )
+
+        # Initialize W&B logger
+        self.wandb_enabled = enable_wandb
+        self.wandb_logger = None
+        if enable_wandb:
+            from .wandb_logger import WandbLogger
+
+            self.wandb_logger = WandbLogger(
+                experiment_name=experiment_name,
+                run_id=self.run_id,
+                project=wandb_project or "ml-research",
+                config={**model_config, **train_config},
+            )
 
     def log_step(
         self,
@@ -163,6 +198,33 @@ class TrainingLogger:
 
         self.logs.append(log_entry)
         self._last_logged_step = self.global_step
+
+        # Log to TensorBoard if enabled
+        if self.tb_logger:
+            self.tb_logger.log_step(
+                global_step=self.global_step,
+                train_loss=avg_loss,
+                train_perplexity=math.exp(min(avg_loss, 20)),
+                learning_rate=learning_rate,
+                tokens_per_second=tokens_per_second,
+                batch_time_ms=batch_time_ms,
+                grad_norm=grad_norm,
+                approximate_tflops=approximate_tflops,
+            )
+
+        # Log to W&B if enabled
+        if self.wandb_logger:
+            self.wandb_logger.log_step(
+                global_step=self.global_step,
+                train_loss=avg_loss,
+                train_perplexity=math.exp(min(avg_loss, 20)),
+                learning_rate=learning_rate,
+                tokens_per_second=tokens_per_second,
+                batch_time_ms=batch_time_ms,
+                grad_norm=grad_norm,
+                approximate_tflops=approximate_tflops,
+            )
+
         return True
 
     def log_epoch(
@@ -216,6 +278,26 @@ class TrainingLogger:
         # Reset epoch losses for next epoch
         self.epoch_losses = []
 
+        # Log to TensorBoard if enabled
+        if self.tb_logger:
+            self.tb_logger.log_epoch(
+                epoch=epoch,
+                global_step=self.global_step,
+                val_loss=val_loss,
+                val_perplexity=val_perplexity,
+                train_loss=epoch_avg_loss,
+            )
+
+        # Log to W&B if enabled
+        if self.wandb_logger:
+            self.wandb_logger.log_epoch(
+                epoch=epoch,
+                global_step=self.global_step,
+                val_loss=val_loss,
+                val_perplexity=val_perplexity,
+                train_loss=epoch_avg_loss,
+            )
+
     def save(self, output_dir: Optional[str] = None) -> Path:
         """
         Save logs to Parquet using experiment storage.
@@ -250,6 +332,17 @@ class TrainingLogger:
         )
 
         print(f"Training logs saved: {filepath}")
+
+        # Close TensorBoard writer
+        if self.tb_logger:
+            self.tb_logger.close()
+            print(f"TensorBoard logs saved: {self.tb_logger.log_path}")
+
+        # Finish W&B run
+        if self.wandb_logger:
+            self.wandb_logger.finish()
+            print("W&B run finished")
+
         return filepath
 
     def get_dataframe(self) -> pd.DataFrame:
