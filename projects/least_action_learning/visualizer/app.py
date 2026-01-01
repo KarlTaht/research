@@ -659,13 +659,30 @@ def create_per_layer_metric_plot(
 # ─── Update Functions ─────────────────────────────────────────────────────────
 
 
-def update_grokking_summary() -> Tuple:
-    """Update grokking quality summary table."""
+def update_grokking_summary(group_filter: str = "All") -> go.Figure:
+    """Update grokking quality summary table.
+
+    Args:
+        group_filter: Group to filter by ("All" shows all experiments)
+
+    Returns:
+        Plotly figure with summary table
+    """
     experiments = load_all_experiments()
 
     if not experiments:
-        empty = create_empty_figure("No experiments found")
-        return empty
+        return create_empty_figure("No experiments found")
+
+    # Filter by group if specified
+    if group_filter != "All":
+        filtered = {}
+        for path, exp in experiments.items():
+            if group_filter == exp.group or (group_filter == "no group" and exp.group == "no group"):
+                filtered[path] = exp
+        experiments = filtered
+
+    if not experiments:
+        return create_empty_figure(f"No experiments in group '{group_filter}'")
 
     analysis_df = analyze_all_experiments(experiments)
     table_fig = create_grokking_summary_table(analysis_df)
@@ -1137,24 +1154,29 @@ def create_app() -> gr.Blocks:
             outputs=[group_dropdown, exp_dropdown, summary_table],
         )
 
-        # Group filter updates experiment dropdown
+        # Group filter updates experiment dropdown and summary table
         def filter_experiments_by_group(selected_group):
             all_choices = get_experiment_choices()
             if selected_group == "All":
-                return gr.update(choices=all_choices, value=None)
-            # Filter by group
-            filtered = []
-            for display, path in all_choices:
-                exp = get_experiment(path)
-                if exp and (selected_group == exp.group or
-                           (selected_group == "no group" and exp.group == "no group")):
-                    filtered.append((display, path))
-            return gr.update(choices=filtered if filtered else all_choices, value=None)
+                dropdown_update = gr.update(choices=all_choices, value=None)
+            else:
+                # Filter by group
+                filtered = []
+                for display, path in all_choices:
+                    exp = get_experiment(path)
+                    if exp and (selected_group == exp.group or
+                               (selected_group == "no group" and exp.group == "no group")):
+                        filtered.append((display, path))
+                dropdown_update = gr.update(choices=filtered if filtered else all_choices, value=None)
+
+            # Update summary table with same filter
+            table_fig = update_grokking_summary(selected_group)
+            return dropdown_update, table_fig
 
         group_dropdown.change(
             fn=filter_experiments_by_group,
             inputs=[group_dropdown],
-            outputs=[exp_dropdown],
+            outputs=[exp_dropdown, summary_table],
         )
 
         # Experiment selection updates controls and all plots
