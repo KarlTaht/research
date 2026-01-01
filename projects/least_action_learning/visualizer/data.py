@@ -110,6 +110,10 @@ def get_experiment_group(exp_name: str) -> str:
     """
     Get the group name for an experiment.
 
+    First checks if explicitly listed in a sweep config. If not, tries to
+    infer group membership by matching naming patterns with known sweep
+    experiments (e.g., experiments with same prefix/suffix pattern).
+
     Args:
         exp_name: Experiment directory name
 
@@ -117,7 +121,45 @@ def get_experiment_group(exp_name: str) -> str:
         Group name from sweep config, or "no group" if not in any sweep
     """
     groups = load_sweep_groups()
-    return groups.get(exp_name, "no group")
+
+    # Check if explicitly listed in a sweep config
+    if exp_name in groups:
+        return groups[exp_name]
+
+    # Try to infer group by pattern matching
+    # Extract the suffix pattern (e.g., "_train30" from "p113_lr3e-4_wd0.50_train30")
+    # and see if other experiments with same suffix are in a known group
+    for known_name, group in groups.items():
+        # Check for common suffix patterns (like _train30, _train50, etc.)
+        # by comparing the part after the last "wd" parameter
+        if "_wd" in exp_name and "_wd" in known_name:
+            # Extract suffix after weight decay value (e.g., "_train30")
+            exp_suffix = _extract_suffix_after_wd(exp_name)
+            known_suffix = _extract_suffix_after_wd(known_name)
+            if exp_suffix and exp_suffix == known_suffix:
+                # Also check that the prefix pattern matches (p, lr values)
+                exp_prefix = _extract_prefix_before_wd(exp_name)
+                known_prefix = _extract_prefix_before_wd(known_name)
+                if exp_prefix == known_prefix:
+                    return group
+
+    return "no group"
+
+
+def _extract_suffix_after_wd(name: str) -> str:
+    """Extract suffix after weight decay value (e.g., '_train30' from 'p113_lr3e-4_wd0.50_train30')."""
+    import re
+    # Match _wd followed by a number (with optional decimal), then capture the rest
+    match = re.search(r"_wd[\d.]+(.*)$", name)
+    return match.group(1) if match else ""
+
+
+def _extract_prefix_before_wd(name: str) -> str:
+    """Extract prefix before weight decay (e.g., 'p113_lr3e-4' from 'p113_lr3e-4_wd0.50_train30')."""
+    import re
+    # Match everything before _wd
+    match = re.search(r"^(.+?)_wd", name)
+    return match.group(1) if match else ""
 
 
 def discover_experiments(output_dir: Optional[Path] = None) -> list[Path]:
