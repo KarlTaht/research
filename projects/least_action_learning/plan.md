@@ -8,6 +8,192 @@ This mirrors the principle of least action from physics and human learning behav
 
 ---
 
+## Architecture
+
+### Model Types
+
+| Type | Description | Config `model_type` |
+|------|-------------|---------------------|
+| BaselineMLP | Standard MLP with GELU activations | `"baseline"` |
+| RoutedNetwork | MLP with learned routing through parallel heads | `"routed"` |
+| GrokTransformer | Decoder-only transformer matching original paper | `"transformer"` |
+
+### Routing Gate Mechanism
+
+The core architecture uses **soft routing** through parallel MLP heads:
+
+```
+Input (a, b) one-hot
+    |
+    v
+[Embedding] -> residual
+    |
+    v
+routing_state = RouteInit(residual)
+    |
+    v
++- Routed Layer --------------------+
+|  heads = [MLP_a, MLP_b, MLP_c, ...]   |
+|  weights = RouteGate(state, residual) |
+|  output = sum weights[i] * heads[i](x)  |
+|  state = RouteUpdate(state, output)   |
++-----------------------------------+
+    |
+    v (repeat N layers)
+    |
+    v
+[Output Head] -> logits
+```
+
+Key features:
+- **Soft routing**: Paths are weighted, not pruned - all heads contribute
+- **Input-dependent**: Routing decisions depend on "path so far" + "new info"
+- **Interpretable**: Can visualize which heads handle which inputs
+
+```mermaid
+flowchart TB
+    subgraph Input["Input to Layer"]
+        X["x (residual)"]
+        S["routing_state<br/>(path history)"]
+    end
+
+    subgraph RoutingGate["Routing Gate"]
+        SP["state_proj(state)"]
+        RP["residual_proj(x)"]
+        ADD["+ Add"]
+        GELU["GELU"]
+        GATE["gate linear"]
+        SOFT["Softmax"]
+    end
+
+    subgraph Heads["Parallel MLP Heads"]
+        H1["Head 0<br/>MLP"]
+        H2["Head 1<br/>MLP"]
+        H3["Head 2<br/>MLP"]
+        H4["Head 3<br/>MLP"]
+    end
+
+    subgraph Combine["Weighted Combination"]
+        W["weights<br/>[w0, w1, w2, w3]"]
+        MUL1["x w0"]
+        MUL2["x w1"]
+        MUL3["x w2"]
+        MUL4["x w3"]
+        SUM["Sum"]
+    end
+
+    subgraph Output["Output"]
+        OUT["output"]
+        NEWSTATE["new routing_state"]
+    end
+
+    S --> SP
+    X --> RP
+    SP --> ADD
+    RP --> ADD
+    ADD --> GELU
+    GELU --> GATE
+    GATE --> SOFT
+    SOFT --> W
+
+    X --> H1
+    X --> H2
+    X --> H3
+    X --> H4
+
+    H1 --> MUL1
+    H2 --> MUL2
+    H3 --> MUL3
+    H4 --> MUL4
+
+    W -.->|w0| MUL1
+    W -.->|w1| MUL2
+    W -.->|w2| MUL3
+    W -.->|w3| MUL4
+
+    MUL1 --> SUM
+    MUL2 --> SUM
+    MUL3 --> SUM
+    MUL4 --> SUM
+
+    SUM --> OUT
+    S --> NEWSTATE
+    OUT --> NEWSTATE
+
+    style RoutingGate fill:#e1f5fe
+    style Heads fill:#fff3e0
+    style Combine fill:#e8f5e9
+```
+
+### Full Network Flow
+
+```mermaid
+flowchart LR
+    subgraph Input
+        IN["(a,b) one-hot"]
+    end
+
+    subgraph Embed
+        EMB["Embedding"]
+        INIT["State Init"]
+    end
+
+    subgraph L1["Layer 1"]
+        R1["Route"]
+        H1["Heads"]
+    end
+
+    subgraph L2["Layer 2"]
+        R2["Route"]
+        H2["Heads"]
+    end
+
+    subgraph L3["Layer N"]
+        RN["Route"]
+        HN["Heads"]
+    end
+
+    subgraph Output
+        HEAD["Output Head"]
+        OUT["logits"]
+    end
+
+    IN --> EMB
+    EMB --> INIT
+    EMB --> H1
+    INIT --> R1
+    R1 -->|weights| H1
+    H1 -->|state| R2
+    H1 --> H2
+    R2 -->|weights| H2
+    H2 -->|state| RN
+    H2 --> HN
+    RN -->|weights| HN
+    HN --> HEAD
+    HEAD --> OUT
+
+    style L1 fill:#e3f2fd
+    style L2 fill:#e3f2fd
+    style L3 fill:#e3f2fd
+```
+
+### Routing Decision Logic
+
+The key insight is that routing at layer l depends on:
+
+1. **Routing state** s_{l-1}: Compressed history of "which path did we take to get here?"
+2. **New residual** x_l: "What new information do we have at this layer?"
+
+```
+weights_l = softmax(W_gate * GELU(W_state * s_{l-1} + W_residual * x_l))
+output_l = sum_i weights_l[i] * head_i(x_l)
+s_l = W_update * [s_{l-1}; output_l]
+```
+
+This allows the network to learn **input-dependent routing** where different inputs take different computational paths through the network.
+
+---
+
 ## 1. Data Generation
 
 **Core requirements:**
@@ -155,6 +341,14 @@ class Trainer:
                 test_metrics = self.evaluate()
                 self.logger.log(epoch, {**metrics, **test_metrics}, self.model.get_gates())
 ```
+
+### Regularizers
+
+Three regularization approaches to encourage efficient routing:
+
+1. **Entropy** (`--routing-reg entropy`): Encourage decisive routing (low entropy)
+2. **Sparsity** (`--routing-reg sparsity`): Encourage concentration on few heads
+3. **Spectral** (`--lambda-spectral 0.1`): Encourage smooth (low-frequency) output functions
 
 ---
 
@@ -310,7 +504,25 @@ class ExperimentLogger:
 
 ---
 
-## 6. Implementation Order
+## Implementation Status
+
+Tracking what has been implemented vs. originally planned:
+
+- [x] Phase 1: Baseline validation (MLP and Transformer)
+- [x] Transformer experiments with hyperparameter sweeps
+- [x] Weight decay sweep (new_year_validation_sweep.yaml)
+- [x] Analysis layer (`src/analysis/`) for notebook-friendly exploration
+- [x] Gradio visualizer with multi-experiment support
+- [x] Curvature metrics (Jacobian, Hessian, gradient norm, Fisher)
+- [x] Adam optimizer dynamics tracking
+- [x] Per-layer weight norm tracking
+- [ ] Routed network experiments (Phase 2-4)
+- [ ] Problem complexity scaling (Phase 5)
+- [ ] Mechanistic interpretability analysis (Phase 6)
+
+---
+
+## 6. Implementation Order (Historical)
 
 ```
 Week 1:
@@ -353,6 +565,32 @@ Week 3+:
 
 ---
 
+## Implementation Notes
+
+Key lessons learned from implementation:
+
+### Weight Decay
+- Critical for grokking: typical range 1.0-2.0
+- Must exclude embeddings, biases, and LayerNorm parameters from weight decay
+- Higher weight decay generally leads to faster grokking but may reduce final performance
+
+### Optimizer Configuration
+- Use `beta2=0.98` instead of 0.999 for more stable training (shorter optimizer memory)
+- Linear LR warmup (500 epochs) prevents early training instability
+- AdamW with `eps=1e-8` works well
+
+### Training Stability
+- Full-batch training is standard for grokking experiments
+- Train/test split of 30-50% typical; smaller training sets grok faster but may be less reliable
+- Gradient clipping (1.0) helps with occasional spikes
+
+### Transformer-Specific
+- Pre-norm architecture (LayerNorm before attention/FFN) is more stable
+- Optional weight tying reduces parameters without hurting performance
+- Token format: `[a, op, b, =]` with vocabulary size `p + 2`
+
+---
+
 ## 8. Success Criteria
 
 **Minimum viable result:**
@@ -369,36 +607,14 @@ Week 3+:
 
 ---
 
-## 9. Repository Structure
+## Related Documentation
 
-```
-least-action-learning/
-├── EXPERIMENT_PLAN.md          # This document
-├── README.md                   # Project overview
-├── pyproject.toml              # Dependencies
-│
-├── src/
-│   ├── data.py                 # ModularArithmeticDataset
-│   ├── models.py               # GatedNetwork, BaselineMLP
-│   ├── costs.py                # Compute cost functions
-│   ├── trainer.py              # Training loop
-│   ├── logger.py               # ExperimentLogger
-│   └── visualize.py            # Plotting functions
-│
-├── experiments/
-│   ├── config/                 # YAML configs for each experiment
-│   ├── scripts/                # Run scripts
-│   └── results/                # Output directory
-│
-└── notebooks/
-    ├── 01_replicate_grokking.ipynb
-    ├── 02_gate_analysis.ipynb
-    └── 03_interpretability.ipynb
-```
+- **Quick Start**: See [README.md](README.md) for installation and basic usage
+- **Development Reference**: See [CLAUDE.md](CLAUDE.md) for code structure, APIs, and implementation details
 
 ---
 
-## 10. References
+## 9. References
 
 - Power et al. (2022) — "Grokking: Generalization Beyond Overfitting on Small Algorithmic Datasets"
 - Nanda et al. (2023) — "Progress measures for grokking via mechanistic interpretability"
