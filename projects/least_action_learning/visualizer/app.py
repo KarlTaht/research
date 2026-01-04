@@ -20,6 +20,23 @@ from .plots import create_grokking_summary_table
 from .helpers import create_empty_figure, filter_by_epoch_range, get_valid_data
 from .styles import CATEGORICAL_COLORS
 
+# Import architecture utilities from analysis layer
+# Handle both running from project root and from within project directory
+try:
+    from ..src.analysis.architecture import (
+        get_layer_names,
+        get_layer_groups,
+        get_layer_display_name,
+        get_layer_choices,
+    )
+except ImportError:
+    from src.analysis.architecture import (
+        get_layer_names,
+        get_layer_groups,
+        get_layer_display_name,
+        get_layer_choices,
+    )
+
 
 # Cache for loaded experiments
 _experiment_cache: dict[str, ExperimentRun] = {}
@@ -98,121 +115,6 @@ def load_all_experiments() -> dict[str, ExperimentRun]:
 
 
 # ─── Helper Functions ─────────────────────────────────────────────────────────
-
-
-def get_transformer_layer_names(n_layers: int) -> dict[str, str]:
-    """
-    Generate descriptive layer names for transformer architecture.
-
-    Maps layer indices (from compute_layer_weight_norms) to descriptive names
-    based on the GrokTransformer structure.
-
-    For a transformer with n_layers blocks, the parameter order is:
-    - 0: token_embedding
-    - 1: pos_embedding
-    - For each block i:
-        - 2 + i*6 + 0: block{i}_attn_Q
-        - 2 + i*6 + 1: block{i}_attn_K
-        - 2 + i*6 + 2: block{i}_attn_V
-        - 2 + i*6 + 3: block{i}_attn_Wo
-        - 2 + i*6 + 4: block{i}_ffn_up
-        - 2 + i*6 + 5: block{i}_ffn_down
-    - Final: output_head
-
-    Args:
-        n_layers: Number of transformer blocks
-
-    Returns:
-        Dict mapping "layer_{idx}" to descriptive name
-    """
-    names = {}
-
-    # Input embeddings
-    names["0"] = "tok_embed"
-    names["1"] = "pos_embed"
-
-    # Transformer blocks
-    for block_idx in range(n_layers):
-        base = 2 + block_idx * 6
-        block_prefix = f"b{block_idx}"
-        names[str(base + 0)] = f"{block_prefix}_attn_Q"
-        names[str(base + 1)] = f"{block_prefix}_attn_K"
-        names[str(base + 2)] = f"{block_prefix}_attn_V"
-        names[str(base + 3)] = f"{block_prefix}_attn_Wo"
-        names[str(base + 4)] = f"{block_prefix}_ffn_up"
-        names[str(base + 5)] = f"{block_prefix}_ffn_down"
-
-    # Output
-    final_idx = 2 + n_layers * 6
-    names[str(final_idx)] = "output_head"
-
-    return names
-
-
-def get_layer_display_name(layer_num: str, exp: ExperimentRun) -> str:
-    """
-    Get display name for a layer based on experiment config.
-
-    Args:
-        layer_num: Layer index as string (e.g., "0", "1", ...)
-        exp: Experiment run with config
-
-    Returns:
-        Descriptive layer name (e.g., "b0_attn_Q") or fallback "Layer {num}"
-    """
-    model_type = exp.config.get("model_type", "transformer")
-
-    if model_type == "transformer":
-        n_layers = exp.config.get("n_layers", exp.n_layers)
-        layer_names = get_transformer_layer_names(n_layers)
-        return layer_names.get(layer_num, f"layer_{layer_num}")
-    elif model_type == "baseline":
-        # For baseline MLP: linear_0, linear_1, ..., output
-        n_layers = exp.config.get("n_layers", exp.n_layers)
-        idx = int(layer_num)
-        if idx < n_layers:
-            return f"linear_{idx}"
-        else:
-            return "output"
-    elif model_type in ("routed", "single_head"):
-        # For routed: embed, routed_0, routed_1, ..., output
-        n_layers = exp.config.get("n_layers", exp.n_layers)
-        idx = int(layer_num)
-        if idx == 0:
-            return "embed"
-        elif idx <= n_layers:
-            return f"routed_{idx - 1}"
-        else:
-            return "output"
-    else:
-        return f"layer_{layer_num}"
-
-
-def get_layer_choices(exp: ExperimentRun, metric_suffix: str = "weight_norm") -> list[str]:
-    """
-    Get list of layer choices for dropdown based on available data.
-
-    Args:
-        exp: Experiment run
-        metric_suffix: Metric suffix to look for (e.g., "weight_norm")
-
-    Returns:
-        List of layer choices including "All" and descriptive names
-    """
-    df = exp.history_df
-    layer_cols = [c for c in df.columns if c.startswith("layer_") and c.endswith(f"_{metric_suffix}")]
-
-    if not layer_cols:
-        return ["All"]
-
-    choices = ["All"]
-    for col in sorted(layer_cols):
-        layer_num = col.split("_")[1]
-        display_name = get_layer_display_name(layer_num, exp)
-        # Use format "idx:name" so we can parse it back
-        choices.append(f"{layer_num}:{display_name}")
-
-    return choices
 
 
 def create_single_metric_plot(
@@ -559,41 +461,6 @@ def create_weight_group_plot(
     return fig
 
 
-def get_weight_group_indices(n_layers: int) -> dict[str, tuple[list[int], list[str]]]:
-    """Get layer indices and names for each weight group.
-
-    Args:
-        n_layers: Number of transformer blocks
-
-    Returns:
-        Dict mapping group name to (layer_indices, display_names)
-    """
-    groups = {}
-
-    # Embeddings: tok_embed (0), pos_embed (1)
-    groups["embeddings"] = ([0, 1], ["tok_embed", "pos_embed"])
-
-    # Per-block groups
-    for block_idx in range(n_layers):
-        base = 2 + block_idx * 6
-
-        # Attention: Q, K, V, Wo
-        attn_indices = [base + 0, base + 1, base + 2, base + 3]
-        attn_names = ["Q", "K", "V", "Wo"]
-        groups[f"block{block_idx}_attn"] = (attn_indices, attn_names)
-
-        # FFN: up, down
-        ffn_indices = [base + 4, base + 5]
-        ffn_names = ["FFN_up", "FFN_down"]
-        groups[f"block{block_idx}_ffn"] = (ffn_indices, ffn_names)
-
-    # Output head
-    output_idx = 2 + n_layers * 6
-    groups["output"] = ([output_idx], ["output_head"])
-
-    return groups
-
-
 def create_per_layer_metric_plot(
     exp: ExperimentRun,
     metric_suffix: str,
@@ -789,7 +656,8 @@ def update_weight_plots(
 
     df = exp.history_df
     n_layers = exp.config.get("n_layers", exp.n_layers)
-    groups = get_weight_group_indices(n_layers)
+    model_type = exp.config.get("model_type", "transformer")
+    groups = get_layer_groups(model_type, n_layers)
 
     # Embeddings plot (always first)
     emb_indices, emb_names = groups["embeddings"]

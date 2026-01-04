@@ -38,17 +38,8 @@ base:
   seed: 42
 
 experiments:
-  - name: "p113_lr3e-4_wd0.50_train30"
-    weight_decay: 0.5
+  - name: "p113_lr3e-4_wd0.10_train30"
+    weight_decay: 0.1
 
-  - name: "p113_lr3e-4_wd0.75_train30"
-    weight_decay: 0.75
-
-  - name: "p113_lr3e-4_wd1.00_train30"
-    weight_decay: 1.0
-
-  - name: "p113_lr3e-4_wd1.25_train30"
-    weight_decay: 1.25
-
-  - name: "p113_lr3e-4_wd1.50_train30"
-    weight_decay: 1.5
+  - name: "p113_lr3e-4_wd0.20_train30"
+    weight_decay: 0.2

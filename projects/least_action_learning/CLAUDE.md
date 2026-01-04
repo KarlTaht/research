@@ -35,22 +35,38 @@ projects/least_action_learning/
 │   ├── models.py              # Model architectures
 │   ├── trainer.py             # Training loop, MetricsComputer
 │   ├── losses.py              # Loss functions, regularizers
-│   ├── metrics/               # Metrics package
+│   ├── metrics/               # Metrics package (training-time)
 │   │   ├── __init__.py        # Package exports
 │   │   ├── curvature.py       # Jacobian, Hessian, spectral, Fisher metrics
 │   │   ├── model_properties.py # Weight norms, representation norms
 │   │   ├── optimizer.py       # Adam optimizer dynamics metrics
 │   │   ├── routing.py         # Routing entropy, head utilization
 │   │   └── training.py        # TrainingMetrics, MetricsHistory
+│   ├── analysis/              # Post-hoc analysis package (notebook-friendly)
+│   │   ├── __init__.py        # Public API exports
+│   │   ├── loader.py          # ExperimentData, ExperimentLoader
+│   │   ├── store.py           # ExperimentStore (DuckDB SQL queries)
+│   │   ├── architecture.py    # Layer naming utilities
+│   │   ├── phases.py          # Grokking phase detection
+│   │   ├── metrics.py         # Derived/aggregate metrics
+│   │   └── comparison.py      # Multi-experiment analysis
 │   ├── routing.py             # Routing gate implementation
 │   └── visualize.py           # Plotting utilities
 ├── visualizer/                # Gradio web UI for experiment analysis
 │   ├── __init__.py
 │   ├── app.py                 # Main Gradio application
-│   ├── data.py                # Experiment loading, sweep groups
+│   ├── data.py                # Thin wrapper over src/analysis
 │   └── plots.py               # Plotly figure creation
 └── outputs/                   # Experiment results (gitignored)
 ```
+
+## Architecture (Three Layers)
+
+The project follows a three-layer architecture:
+
+1. **Training** (`scripts/`, `src/trainer.py`, `src/metrics/`) → Produces artifacts
+2. **Analysis** (`src/analysis/`) → Notebook-friendly API for querying and analyzing
+3. **UX** (`visualizer/`) → Gradio web UI (thin wrapper over analysis layer)
 
 ## Commands
 
@@ -89,6 +105,10 @@ python scripts/train.py --config configs/baseline.yaml --resume --extra-epochs 5
 
 # Launch experiment visualizer (Gradio web UI)
 python -m projects.least_action_learning.visualizer
+
+# Or from within the project directory:
+cd projects/least_action_learning
+python -m visualizer
 ```
 
 ## Model Types
@@ -204,8 +224,40 @@ Use `1.0e-8` instead of `1e-8` in YAML files. YAML 1.1 requires a decimal point 
 - `plot_routing_heatmap()`: Dominant routing head per input
 - `save_all_visualizations()`: Generate all plots to output dir
 
+### src/analysis/ (Analysis Layer)
+Notebook-friendly API for post-hoc experiment analysis. Decoupled from UI.
+
+**loader.py**:
+- `ExperimentData`: Dataclass container for loaded experiment
+- `ExperimentLoader`: Load experiments from saved artifacts
+- `get_routing_at_step()`: Get routing snapshot at training percentage
+
+**store.py**:
+- `ExperimentStore`: SQL queries over all experiments via DuckDB
+- `load_sweep_groups()`: Parse sweep configs for grouping
+- `get_experiment_group()`: Get group name for experiment
+
+**architecture.py**:
+- `get_layer_names()`: Map layer indices to descriptive names
+- `get_layer_groups()`: Group layers by component (embeddings, attention, FFN)
+- `get_layer_display_name()`: Get display name for specific layer
+
+**phases.py**:
+- `GrokkingPhases`: Dataclass for detected training phases
+- `detect_phases()`: Detect memorization/grokking/plateau phases
+- `analyze_grokking()`: Compute grokking quality metrics
+
+**metrics.py**:
+- `compute_derived_metrics()`: Add generalization_gap, loss_ratio, etc.
+- `compute_aggregates_over_history()`: Mean, std, variance after grok
+
+**comparison.py**:
+- `align_by_epoch()`: Align metrics across experiments
+- `group_by_hyperparameter()`: Aggregate by config parameter
+- `create_sweep_summary()`: Summary table for sweeps
+
 ### visualizer/ (Gradio Web UI)
-Interactive experiment analysis dashboard for comparing training runs.
+Interactive experiment analysis dashboard. Thin wrapper over `src/analysis/`.
 
 **app.py**:
 - Main Gradio application with multi-experiment selection
@@ -213,9 +265,8 @@ Interactive experiment analysis dashboard for comparing training runs.
 - Automatic sweep group detection from experiment names
 
 **data.py**:
-- `list_experiments()`: Find all experiments with history.parquet
-- `load_experiment()`: Load metrics DataFrame from Parquet
-- `get_sweep_groups()`: Group experiments by sweep config name
+- Re-exports from `src/analysis` for backward compatibility
+- `ExperimentRun` alias for `ExperimentData`
 
 **plots.py**:
 - `create_metric_plot()`: Generate Plotly figures for any metric
@@ -306,3 +357,40 @@ python scripts/run_sweep.py --config configs/new_year_validation_sweep.yaml
 ### Resuming from wrong epoch
 - Checkpoints now store explicit `epoch` field
 - Old checkpoints fall back to `best_epoch` (may be inaccurate)
+
+## Notebook Usage (Analysis Layer)
+
+The `src/analysis/` package provides a notebook-friendly API for exploring experiments:
+
+```python
+from src.analysis import ExperimentStore, ExperimentLoader, detect_phases
+
+# Query experiments with SQL
+store = ExperimentStore()
+best = store.query('''
+    SELECT experiment_name, MAX(test_acc) as best_acc
+    FROM experiments
+    GROUP BY experiment_name
+    ORDER BY best_acc DESC
+    LIMIT 5
+''')
+
+# Load single experiment
+loader = ExperimentLoader()
+exp = loader.load('p17_lr3e-4_wd1.0')
+print(f"Max epoch: {exp.max_epoch}, Grokked: {exp.has_grokked}")
+
+# Detect grokking phases
+phases = detect_phases(exp.history_df)
+print(f"Grokked at step {phases.grokking_start}")
+
+# Compute derived metrics
+from src.analysis import compute_derived_metrics
+enriched = compute_derived_metrics(exp.history_df)
+print(enriched[['step', 'generalization_gap', 'loss_ratio']].tail())
+
+# Compare experiments
+from src.analysis import create_sweep_summary
+exps = [loader.load(name) for name in store.list_experiments()[:5]]
+summary = create_sweep_summary(exps, ['lr', 'weight_decay'], ['test_acc'])
+```
