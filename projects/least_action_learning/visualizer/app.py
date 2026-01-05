@@ -1394,11 +1394,6 @@ def create_app() -> gr.Blocks:
                     label="Layer",
                     info="Filter per-layer plots",
                 )
-                show_embeddings = gr.Checkbox(
-                    label="Show Embeddings",
-                    value=False,
-                    info="Include embedding layers in Weight Analysis",
-                )
 
         gr.Markdown("---")
 
@@ -1419,6 +1414,13 @@ def create_app() -> gr.Blocks:
                 gr.Markdown(
                     "*Track how model weights evolve during training. "
                     "Weight norm growth often precedes grokking.*"
+                )
+
+                # Checkbox to show/hide embeddings section
+                show_embeddings = gr.Checkbox(
+                    label="Show Embeddings",
+                    value=False,
+                    info="Include embedding layers (tok_embed, pos_embed) in the analysis",
                 )
 
                 # Row 1: Embeddings (hidden by default, wrapped in Column for visibility toggle)
