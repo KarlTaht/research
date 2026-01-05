@@ -24,18 +24,18 @@ from .styles import CATEGORICAL_COLORS
 # Handle both running from project root and from within project directory
 try:
     from ..src.analysis.architecture import (
-        get_layer_names,
         get_layer_groups,
         get_layer_display_name,
         get_layer_choices,
     )
+    from ..src.analysis.phases import analyze_grokking
 except ImportError:
     from src.analysis.architecture import (
-        get_layer_names,
         get_layer_groups,
         get_layer_display_name,
         get_layer_choices,
     )
+    from src.analysis.phases import analyze_grokking
 
 
 # Cache for loaded experiments
@@ -74,10 +74,7 @@ def get_experiment_choices() -> list[tuple[str, str]]:
 
     if analysis_df.empty:
         # Fallback to unsorted if analysis fails
-        return [
-            (get_experiment_display_name(Path(path)), path)
-            for path in experiments.keys()
-        ]
+        return [(get_experiment_display_name(Path(path)), path) for path in experiments.keys()]
 
     # Build choices with IDs based on sorted order
     choices = []
@@ -303,10 +300,20 @@ def create_accuracy_curves_plot(
         return create_empty_figure("No accuracy data")
 
     # Add threshold lines
-    fig.add_hline(y=0.95, line_dash="dot", line_color="gray",
-                  annotation_text="95%", annotation_position="right")
-    fig.add_hline(y=0.98, line_dash="dot", line_color="lightgray",
-                  annotation_text="98%", annotation_position="right")
+    fig.add_hline(
+        y=0.95,
+        line_dash="dot",
+        line_color="gray",
+        annotation_text="95%",
+        annotation_position="right",
+    )
+    fig.add_hline(
+        y=0.98,
+        line_dash="dot",
+        line_color="lightgray",
+        annotation_text="98%",
+        annotation_position="right",
+    )
 
     fig.update_layout(
         title="Accuracy Curves",
@@ -474,7 +481,9 @@ def create_per_layer_metric_plot(
 
     df = filter_by_epoch_range(df, min_epoch, max_epoch)
 
-    layer_cols = [c for c in df.columns if c.startswith("layer_") and c.endswith(f"_{metric_suffix}")]
+    layer_cols = [
+        c for c in df.columns if c.startswith("layer_") and c.endswith(f"_{metric_suffix}")
+    ]
 
     if not layer_cols:
         return create_empty_figure(f"No per-layer {metric_suffix} data")
@@ -523,6 +532,388 @@ def create_per_layer_metric_plot(
     return fig
 
 
+# ─── Multi-Experiment Plot Functions ──────────────────────────────────────────
+
+
+def create_multi_loss_curves_plot(
+    experiments: list[ExperimentRun],
+    min_epoch: int = 0,
+    max_epoch: int = 100000,
+) -> go.Figure:
+    """Create loss curves for multiple experiments with unique colors."""
+    if not experiments:
+        return create_empty_figure("Select experiments")
+
+    fig = go.Figure()
+    has_data = False
+
+    for i, exp in enumerate(experiments):
+        df = filter_by_epoch_range(exp.history_df, min_epoch, max_epoch)
+        color = CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
+        name = exp.name
+
+        # Test loss (solid)
+        if "test_loss" in df.columns:
+            y_data, valid_mask = get_valid_data(df, "test_loss")
+            if valid_mask.any():
+                has_data = True
+                fig.add_trace(
+                    go.Scatter(
+                        x=df.loc[valid_mask, "step"],
+                        y=df.loc[valid_mask, "test_loss"],
+                        mode="lines",
+                        name=f"{name} (test)",
+                        line=dict(color=color, width=2),
+                        legendgroup=name,
+                    )
+                )
+
+        # Train loss (dotted)
+        if "train_loss" in df.columns:
+            y_data, valid_mask = get_valid_data(df, "train_loss")
+            if valid_mask.any():
+                has_data = True
+                fig.add_trace(
+                    go.Scatter(
+                        x=df.loc[valid_mask, "step"],
+                        y=df.loc[valid_mask, "train_loss"],
+                        mode="lines",
+                        name=f"{name} (train)",
+                        line=dict(color=color, width=2, dash="dot"),
+                        legendgroup=name,
+                        showlegend=False,
+                    )
+                )
+
+    if not has_data:
+        return create_empty_figure("No loss data")
+
+    fig.update_layout(
+        title="Loss Curves",
+        xaxis_title="Step",
+        yaxis_title="Loss",
+        yaxis_type="log",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=300,
+    )
+    return fig
+
+
+def create_multi_accuracy_curves_plot(
+    experiments: list[ExperimentRun],
+    min_epoch: int = 0,
+    max_epoch: int = 100000,
+) -> go.Figure:
+    """Create accuracy curves for multiple experiments with unique colors."""
+    if not experiments:
+        return create_empty_figure("Select experiments")
+
+    fig = go.Figure()
+    has_data = False
+
+    for i, exp in enumerate(experiments):
+        df = filter_by_epoch_range(exp.history_df, min_epoch, max_epoch)
+        color = CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
+        name = exp.name
+
+        # Test accuracy (solid)
+        if "test_acc" in df.columns:
+            y_data, valid_mask = get_valid_data(df, "test_acc")
+            if valid_mask.any():
+                has_data = True
+                fig.add_trace(
+                    go.Scatter(
+                        x=df.loc[valid_mask, "step"],
+                        y=df.loc[valid_mask, "test_acc"],
+                        mode="lines",
+                        name=f"{name} (test)",
+                        line=dict(color=color, width=2),
+                        legendgroup=name,
+                    )
+                )
+
+        # Train accuracy (dotted)
+        if "train_acc" in df.columns:
+            y_data, valid_mask = get_valid_data(df, "train_acc")
+            if valid_mask.any():
+                has_data = True
+                fig.add_trace(
+                    go.Scatter(
+                        x=df.loc[valid_mask, "step"],
+                        y=df.loc[valid_mask, "train_acc"],
+                        mode="lines",
+                        name=f"{name} (train)",
+                        line=dict(color=color, width=2, dash="dot"),
+                        legendgroup=name,
+                        showlegend=False,
+                    )
+                )
+
+    if not has_data:
+        return create_empty_figure("No accuracy data")
+
+    # Add threshold lines
+    fig.add_hline(
+        y=0.95,
+        line_dash="dot",
+        line_color="gray",
+        annotation_text="95%",
+        annotation_position="right",
+    )
+    fig.add_hline(
+        y=0.98,
+        line_dash="dot",
+        line_color="lightgray",
+        annotation_text="98%",
+        annotation_position="right",
+    )
+
+    fig.update_layout(
+        title="Accuracy Curves",
+        xaxis_title="Step",
+        yaxis_title="Accuracy",
+        yaxis_range=[0, 1.05],
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=300,
+    )
+    return fig
+
+
+def create_multi_learning_rate_plot(
+    experiments: list[ExperimentRun],
+    min_epoch: int = 0,
+    max_epoch: int = 100000,
+) -> go.Figure:
+    """Create learning rate schedule plot for multiple experiments."""
+    if not experiments:
+        return create_empty_figure("Select experiments")
+
+    fig = go.Figure()
+    has_data = False
+
+    for i, exp in enumerate(experiments):
+        config = exp.config
+        df = filter_by_epoch_range(exp.history_df, min_epoch, max_epoch)
+        color = CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
+        name = exp.name
+
+        if df.empty or "step" not in df.columns:
+            continue
+
+        base_lr = config.get("lr", 1e-3)
+        warmup_epochs = config.get("warmup_epochs", 0)
+
+        # Compute LR at each step
+        steps = df["step"].values
+        lrs = []
+        for step in steps:
+            if warmup_epochs > 0 and step < warmup_epochs:
+                lr = base_lr * (step + 1) / warmup_epochs
+            else:
+                lr = base_lr
+            lrs.append(lr)
+
+        has_data = True
+        fig.add_trace(
+            go.Scatter(
+                x=steps,
+                y=lrs,
+                mode="lines",
+                name=name,
+                line=dict(color=color, width=2),
+            )
+        )
+
+    if not has_data:
+        return create_empty_figure("No training data")
+
+    fig.update_layout(
+        title="Learning Rate Schedule",
+        xaxis_title="Step",
+        yaxis_title="Learning Rate",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=300,
+    )
+    fig.update_yaxes(tickformat=".1e")
+    return fig
+
+
+def create_multi_single_metric_plot(
+    experiments: list[ExperimentRun],
+    metric: str,
+    title: str,
+    log_scale: bool = False,
+    min_epoch: int = 0,
+    max_epoch: int = 100000,
+) -> go.Figure:
+    """Create a single-metric plot for multiple experiments."""
+    if not experiments:
+        return create_empty_figure("Select experiments")
+
+    fig = go.Figure()
+    has_data = False
+
+    for i, exp in enumerate(experiments):
+        df = filter_by_epoch_range(exp.history_df, min_epoch, max_epoch)
+        color = CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
+        name = exp.name
+
+        if metric not in df.columns:
+            continue
+
+        y_data, valid_mask = get_valid_data(df, metric)
+        if valid_mask.any():
+            has_data = True
+            fig.add_trace(
+                go.Scatter(
+                    x=df.loc[valid_mask, "step"],
+                    y=df.loc[valid_mask, metric],
+                    mode="lines",
+                    name=name,
+                    line=dict(color=color, width=2),
+                )
+            )
+
+    if not has_data:
+        return create_empty_figure(f"No {metric} data")
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Step",
+        yaxis_title=title,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=300,
+    )
+
+    if log_scale:
+        fig.update_yaxes(type="log")
+
+    return fig
+
+
+def create_multi_weight_group_plot(
+    experiments: list[ExperimentRun],
+    layer_indices: list[int],
+    layer_names: list[str],
+    title: str,
+    min_epoch: int = 0,
+    max_epoch: int = 100000,
+) -> go.Figure:
+    """Create weight norm plot for multiple experiments (single layer group)."""
+    if not experiments:
+        return create_empty_figure("Select experiments")
+
+    fig = go.Figure()
+    has_data = False
+
+    # For multi-experiment, we simplify to total norm per experiment for this group
+    for exp_idx, exp in enumerate(experiments):
+        df = filter_by_epoch_range(exp.history_df, min_epoch, max_epoch)
+        color = CATEGORICAL_COLORS[exp_idx % len(CATEGORICAL_COLORS)]
+        name = exp.name
+
+        # Sum weight norms for this group
+        group_cols = [f"layer_{idx}_weight_norm" for idx in layer_indices]
+        existing_cols = [c for c in group_cols if c in df.columns]
+
+        if not existing_cols:
+            continue
+
+        # Plot each layer within the group with different dash patterns
+        for layer_idx, layer_name in zip(layer_indices, layer_names):
+            col = f"layer_{layer_idx}_weight_norm"
+            if col not in df.columns:
+                continue
+
+            y_data, valid_mask = get_valid_data(df, col)
+            if valid_mask.any():
+                has_data = True
+                # Use different dash patterns for layers within same experiment
+                dash_patterns = ["solid", "dash", "dot", "dashdot"]
+                dash_idx = layer_indices.index(layer_idx) % len(dash_patterns)
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=df.loc[valid_mask, "step"],
+                        y=df.loc[valid_mask, col],
+                        mode="lines",
+                        name=f"{name}: {layer_name}",
+                        line=dict(
+                            color=color,
+                            width=2,
+                            dash=dash_patterns[dash_idx] if len(experiments) > 1 else "solid",
+                        ),
+                        legendgroup=name,
+                    )
+                )
+
+    if not has_data:
+        return create_empty_figure(f"No data for {title}")
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Step",
+        yaxis_title="Weight Norm",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=280,
+    )
+    return fig
+
+
+def create_multi_effective_lr_plot(
+    experiments: list[ExperimentRun],
+    min_epoch: int = 0,
+    max_epoch: int = 100000,
+) -> go.Figure:
+    """Create effective LR plot for multiple experiments."""
+    if not experiments:
+        return create_empty_figure("Select experiments")
+
+    fig = go.Figure()
+    has_data = False
+
+    for i, exp in enumerate(experiments):
+        df = filter_by_epoch_range(exp.history_df, min_epoch, max_epoch)
+        color = CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
+        name = exp.name
+
+        for metric, line_style in [("effective_lr_mean", "solid"), ("effective_lr_max", "dash")]:
+            y_data, valid_mask = get_valid_data(df, metric)
+            if valid_mask.any():
+                has_data = True
+                metric_label = "mean" if "mean" in metric else "max"
+                fig.add_trace(
+                    go.Scatter(
+                        x=df.loc[valid_mask, "step"],
+                        y=df.loc[valid_mask, metric],
+                        mode="lines",
+                        name=f"{name} ({metric_label})",
+                        line=dict(color=color, width=2, dash=line_style),
+                        legendgroup=name,
+                        showlegend=(metric == "effective_lr_mean"),
+                    )
+                )
+
+    if not has_data:
+        return create_empty_figure("No effective LR data")
+
+    fig.update_layout(
+        title="Effective LR (√v_t)",
+        xaxis_title="Step",
+        yaxis_title="√v_t",
+        yaxis_type="log",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=300,
+    )
+    return fig
+
+
 # ─── Update Functions ─────────────────────────────────────────────────────────
 
 
@@ -544,7 +935,9 @@ def update_grokking_summary(group_filter: str = "All") -> go.Figure:
     if group_filter != "All":
         filtered = {}
         for path, exp in experiments.items():
-            if group_filter == exp.group or (group_filter == "no group" and exp.group == "no group"):
+            if group_filter == exp.group or (
+                group_filter == "no group" and exp.group == "no group"
+            ):
                 filtered[path] = exp
         experiments = filtered
 
@@ -557,38 +950,68 @@ def update_grokking_summary(group_filter: str = "All") -> go.Figure:
     return table_fig
 
 
-def update_experiment_controls(exp_path: str) -> Tuple:
-    """Update control widgets when experiment changes."""
-    if not exp_path:
+def update_experiment_controls(exp_paths: list[str] | str | None) -> Tuple:
+    """Update control widgets when experiment changes.
+
+    Uses intelligent max epoch default: grok_step + max(10% of total, 500 epochs).
+    Falls back to full range if experiment hasn't grokked.
+    Based on first selected experiment for multi-experiment mode.
+    """
+    # Normalize to list
+    if not exp_paths:
         return (
             gr.update(maximum=10000, value=0),
             gr.update(maximum=10000, value=10000),
             gr.update(choices=["All"], value="All"),
         )
 
-    exp = get_experiment(exp_path)
-    if exp is None:
+    if isinstance(exp_paths, str):
+        exp_paths = [exp_paths]
+
+    # Load first experiment for controls (use first for defaults)
+    first_exp = None
+    all_max_steps = []
+    for path in exp_paths:
+        exp = get_experiment(path)
+        if exp:
+            if first_exp is None:
+                first_exp = exp
+            max_step = int(exp.history_df["step"].max()) if not exp.history_df.empty else 10000
+            all_max_steps.append(max_step)
+
+    if first_exp is None:
         return (
             gr.update(maximum=10000, value=0),
             gr.update(maximum=10000, value=10000),
             gr.update(choices=["All"], value="All"),
         )
 
-    # Get max step from experiment
-    max_step = int(exp.history_df["step"].max()) if not exp.history_df.empty else 10000
+    # Use max across all experiments for slider range
+    max_step = max(all_max_steps) if all_max_steps else 10000
+
+    # Compute intelligent default max_epoch based on first experiment's grok_step
+    default_max_epoch = max_step  # fallback to full range
+    try:
+        analysis = analyze_grokking(first_exp)
+        if analysis.grok_step is not None:
+            # Default to grok_step + max(10% of total, 500 epochs)
+            buffer = max(int(0.1 * max_step), 500)
+            default_max_epoch = min(analysis.grok_step + buffer, max_step)
+    except Exception:
+        pass  # Fall back to full range if analysis fails
 
     # Get layer choices with descriptive names (e.g., "0:tok_embed", "2:b0_attn_Q")
-    layer_choices = get_layer_choices(exp, metric_suffix="weight_norm")
+    layer_choices = get_layer_choices(first_exp, metric_suffix="weight_norm")
 
     return (
         gr.update(maximum=max_step, value=0),
-        gr.update(maximum=max_step, value=max_step),
+        gr.update(maximum=max_step, value=default_max_epoch),
         gr.update(choices=layer_choices, value="All"),
     )
 
 
 def update_training_dynamics_plots(
-    exp_path: str,
+    exp_paths: list[str] | str | None,
     min_epoch: int,
     max_epoch: int,
 ) -> Tuple:
@@ -598,40 +1021,49 @@ def update_training_dynamics_plots(
     - Loss curves (train dotted, test solid)
     - Accuracy curves (train dotted, test solid)
     - Learning rate schedule
+
+    Supports multiple experiments for overlay comparison.
     """
-    if not exp_path:
-        empty = create_empty_figure("Select an experiment")
+    # Normalize to list
+    if not exp_paths:
+        empty = create_empty_figure("Select experiment(s)")
         return empty, empty, empty
 
-    exp = get_experiment(exp_path)
-    if exp is None:
-        empty = create_empty_figure("Failed to load experiment")
+    if isinstance(exp_paths, str):
+        exp_paths = [exp_paths]
+
+    # Load all experiments
+    experiments = []
+    for path in exp_paths:
+        exp = get_experiment(path)
+        if exp:
+            experiments.append(exp)
+
+    if not experiments:
+        empty = create_empty_figure("Failed to load experiment(s)")
         return empty, empty, empty
 
-    df = exp.history_df
-
-    # Loss curves
-    loss_fig = create_loss_curves_plot(df, min_epoch=min_epoch, max_epoch=max_epoch)
-
-    # Accuracy curves
-    acc_fig = create_accuracy_curves_plot(df, min_epoch=min_epoch, max_epoch=max_epoch)
-
-    # Learning rate
-    lr_fig = create_learning_rate_plot(exp, min_epoch=min_epoch, max_epoch=max_epoch)
+    # Use multi-experiment functions for overlay
+    loss_fig = create_multi_loss_curves_plot(experiments, min_epoch=min_epoch, max_epoch=max_epoch)
+    acc_fig = create_multi_accuracy_curves_plot(
+        experiments, min_epoch=min_epoch, max_epoch=max_epoch
+    )
+    lr_fig = create_multi_learning_rate_plot(experiments, min_epoch=min_epoch, max_epoch=max_epoch)
 
     return loss_fig, acc_fig, lr_fig
 
 
 def update_weight_plots(
-    exp_path: str,
+    exp_paths: list[str] | str | None,
     min_epoch: int,
     max_epoch: int,
     selected_layer: str,
+    show_embeddings: bool = False,
 ) -> Tuple:
     """Update weight analysis plots with expanded layout.
 
     Returns 6 plots:
-    - Embeddings (tok_embed, pos_embed)
+    - Embeddings (tok_embed, pos_embed) - hidden by default unless show_embeddings=True
     - Block 0 Attention (Q, K, V, Wo)
     - Block 0 FFN (up, down)
     - Block 1 Attention (Q, K, V, Wo)
@@ -640,31 +1072,51 @@ def update_weight_plots(
 
     Note: UI currently supports 2 blocks. To support more blocks,
     update the UI layout in create_app() as well.
+
+    Supports multiple experiments for overlay comparison.
     """
     # UI currently hardcoded for 2 blocks (4 block plots + embed + output = 6)
     n_ui_blocks = 2
     n_plots = 2 + n_ui_blocks * 2  # embed + blocks*2 + output
 
-    if not exp_path:
-        empty = create_empty_figure("Select an experiment")
+    # Normalize to list
+    if not exp_paths:
+        empty = create_empty_figure("Select experiment(s)")
         return (empty,) * n_plots
 
-    exp = get_experiment(exp_path)
-    if exp is None:
-        empty = create_empty_figure("Failed to load experiment")
+    if isinstance(exp_paths, str):
+        exp_paths = [exp_paths]
+
+    # Load all experiments
+    experiments = []
+    for path in exp_paths:
+        exp = get_experiment(path)
+        if exp:
+            experiments.append(exp)
+
+    if not experiments:
+        empty = create_empty_figure("Failed to load experiment(s)")
         return (empty,) * n_plots
 
-    df = exp.history_df
-    n_layers = exp.config.get("n_layers", exp.n_layers)
-    model_type = exp.config.get("model_type", "transformer")
+    # Use first experiment for structure (assumes consistent architecture)
+    first_exp = experiments[0]
+    n_layers = first_exp.config.get("n_layers", first_exp.n_layers)
+    model_type = first_exp.config.get("model_type", "transformer")
     groups = get_layer_groups(model_type, n_layers)
 
-    # Embeddings plot (always first)
-    emb_indices, emb_names = groups["embeddings"]
-    embed_fig = create_weight_group_plot(
-        df, emb_indices, emb_names, "Embeddings",
-        min_epoch=min_epoch, max_epoch=max_epoch
-    )
+    # Embeddings plot - conditionally show based on toggle
+    if show_embeddings:
+        emb_indices, emb_names = groups["embeddings"]
+        embed_fig = create_multi_weight_group_plot(
+            experiments,
+            emb_indices,
+            emb_names,
+            "Embeddings",
+            min_epoch=min_epoch,
+            max_epoch=max_epoch,
+        )
+    else:
+        embed_fig = create_empty_figure("Embeddings hidden (toggle above to show)")
 
     # Block plots via loop (attention then FFN for each block)
     block_figs = []
@@ -674,10 +1126,13 @@ def update_weight_plots(
             key = f"block{block_idx}_{component}"
             if key in groups:
                 indices, names = groups[key]
-                fig = create_weight_group_plot(
-                    df, indices, names,
+                fig = create_multi_weight_group_plot(
+                    experiments,
+                    indices,
+                    names,
                     f"Block {block_idx}: {component_names[component]}",
-                    min_epoch=min_epoch, max_epoch=max_epoch
+                    min_epoch=min_epoch,
+                    max_epoch=max_epoch,
                 )
             else:
                 fig = create_empty_figure(f"No Block {block_idx} {component} data")
@@ -685,56 +1140,83 @@ def update_weight_plots(
 
     # Output head plot (always last)
     out_indices, out_names = groups["output"]
-    output_fig = create_weight_group_plot(
-        df, out_indices, out_names, "Output Head",
-        min_epoch=min_epoch, max_epoch=max_epoch
+    output_fig = create_multi_weight_group_plot(
+        experiments, out_indices, out_names, "Output Head", min_epoch=min_epoch, max_epoch=max_epoch
     )
 
     return (embed_fig, *block_figs, output_fig)
 
 
 def update_curvature_plots(
-    exp_path: str,
+    exp_paths: list[str] | str | None,
     min_epoch: int,
     max_epoch: int,
 ) -> Tuple:
-    """Update curvature analysis plots (both input-sensitivity and weight-curvature)."""
-    if not exp_path:
-        empty = create_empty_figure("Select an experiment")
+    """Update curvature analysis plots (both input-sensitivity and weight-curvature).
+
+    Supports multiple experiments for overlay comparison.
+    """
+    # Normalize to list
+    if not exp_paths:
+        empty = create_empty_figure("Select experiment(s)")
         return empty, empty, empty, empty, empty
 
-    exp = get_experiment(exp_path)
-    if exp is None:
-        empty = create_empty_figure("Failed to load experiment")
-        return empty, empty, empty, empty, empty
+    if isinstance(exp_paths, str):
+        exp_paths = [exp_paths]
 
-    df = exp.history_df
+    # Load all experiments
+    experiments = []
+    for path in exp_paths:
+        exp = get_experiment(path)
+        if exp:
+            experiments.append(exp)
+
+    if not experiments:
+        empty = create_empty_figure("Failed to load experiment(s)")
+        return empty, empty, empty, empty, empty
 
     # Input-sensitivity metrics (∇_x)
-    jacobian_fig = create_single_metric_plot(
-        df, "jacobian_norm", "Jacobian Norm (∇ₓf)", log_scale=True,
-        min_epoch=min_epoch, max_epoch=max_epoch
+    jacobian_fig = create_multi_single_metric_plot(
+        experiments,
+        "jacobian_norm",
+        "Jacobian Norm (∇ₓf)",
+        log_scale=True,
+        min_epoch=min_epoch,
+        max_epoch=max_epoch,
     )
 
-    input_hessian_fig = create_single_metric_plot(
-        df, "hessian_trace", "Input Hessian Trace (∇²ₓf)",
-        min_epoch=min_epoch, max_epoch=max_epoch
+    input_hessian_fig = create_multi_single_metric_plot(
+        experiments,
+        "hessian_trace",
+        "Input Hessian Trace (∇²ₓf)",
+        min_epoch=min_epoch,
+        max_epoch=max_epoch,
     )
 
     # Weight-curvature metrics (∇_w)
-    gradient_norm_fig = create_single_metric_plot(
-        df, "gradient_norm", "Gradient Norm (∇ᵥL)", log_scale=True,
-        min_epoch=min_epoch, max_epoch=max_epoch
+    gradient_norm_fig = create_multi_single_metric_plot(
+        experiments,
+        "gradient_norm",
+        "Gradient Norm (∇ᵥL)",
+        log_scale=True,
+        min_epoch=min_epoch,
+        max_epoch=max_epoch,
     )
 
-    weight_hessian_fig = create_single_metric_plot(
-        df, "weight_hessian_trace", "Weight Hessian (∇²ᵥL)",
-        min_epoch=min_epoch, max_epoch=max_epoch
+    weight_hessian_fig = create_multi_single_metric_plot(
+        experiments,
+        "weight_hessian_trace",
+        "Weight Hessian (∇²ᵥL)",
+        min_epoch=min_epoch,
+        max_epoch=max_epoch,
     )
 
-    fisher_fig = create_single_metric_plot(
-        df, "fisher_trace", "Fisher Trace (∇L·∇Lᵀ)",
-        min_epoch=min_epoch, max_epoch=max_epoch
+    fisher_fig = create_multi_single_metric_plot(
+        experiments,
+        "fisher_trace",
+        "Fisher Trace (∇L·∇Lᵀ)",
+        min_epoch=min_epoch,
+        max_epoch=max_epoch,
     )
 
     return jacobian_fig, input_hessian_fig, gradient_norm_fig, weight_hessian_fig, fisher_fig
@@ -752,7 +1234,7 @@ def update_gradient_plots(
 
 
 def update_adam_plots(
-    exp_path: str,
+    exp_paths: list[str] | str | None,
     min_epoch: int,
     max_epoch: int,
 ) -> Tuple:
@@ -762,74 +1244,60 @@ def update_adam_plots(
     - Effective LR (mean and max sqrt(v_t))
     - Adam ratio (signal-to-noise: |m|/(sqrt(v)+eps))
     - Update/Decay ratio (learning vs forgetting)
+
+    Supports multiple experiments for overlay comparison.
     """
-    if not exp_path:
-        empty = create_empty_figure("Select an experiment")
+    # Normalize to list
+    if not exp_paths:
+        empty = create_empty_figure("Select experiment(s)")
         return empty, empty, empty
 
-    exp = get_experiment(exp_path)
-    if exp is None:
-        empty = create_empty_figure("Failed to load experiment")
+    if isinstance(exp_paths, str):
+        exp_paths = [exp_paths]
+
+    # Load all experiments
+    experiments = []
+    for path in exp_paths:
+        exp = get_experiment(path)
+        if exp:
+            experiments.append(exp)
+
+    if not experiments:
+        empty = create_empty_figure("Failed to load experiment(s)")
         return empty, empty, empty
 
-    df = exp.history_df
-    filtered_df = filter_by_epoch_range(df, min_epoch, max_epoch)
-
-    # Effective LR plot (show both mean and max on same plot)
-    effective_lr_fig = go.Figure()
-    has_eff_lr_data = False
-
-    for metric, name, color in [
-        ("effective_lr_mean", "Mean", CATEGORICAL_COLORS[0]),
-        ("effective_lr_max", "Max", CATEGORICAL_COLORS[1]),
-    ]:
-        y_data, valid_mask = get_valid_data(filtered_df, metric)
-        if valid_mask.any():
-            has_eff_lr_data = True
-            effective_lr_fig.add_trace(
-                go.Scatter(
-                    x=filtered_df.loc[valid_mask, "step"],
-                    y=filtered_df.loc[valid_mask, metric],
-                    mode="lines",
-                    name=name,
-                    line=dict(color=color, width=2),
-                    hovertemplate=f"{name}<br>Step: %{{x}}<br>√v: %{{y:.4g}}<extra></extra>",
-                )
-            )
-
-    if not has_eff_lr_data:
-        effective_lr_fig = create_empty_figure("No effective LR data")
-    else:
-        effective_lr_fig.update_layout(
-            title="Effective LR (√v_t)",
-            xaxis_title="Step",
-            yaxis_title="√v_t",
-            yaxis_type="log",
-            hovermode="x unified",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            height=300,
-        )
+    # Effective LR plot
+    effective_lr_fig = create_multi_effective_lr_plot(experiments, min_epoch, max_epoch)
 
     # Adam ratio plot
-    adam_ratio_fig = create_single_metric_plot(
-        df, "adam_ratio_mean", "Adam Ratio (|m|/(√v+ε))", log_scale=True,
-        min_epoch=min_epoch, max_epoch=max_epoch
+    adam_ratio_fig = create_multi_single_metric_plot(
+        experiments,
+        "adam_ratio_mean",
+        "Adam Ratio (|m|/(√v+ε))",
+        log_scale=True,
+        min_epoch=min_epoch,
+        max_epoch=max_epoch,
     )
 
     # Update/Decay ratio plot
-    update_decay_fig = create_single_metric_plot(
-        df, "update_decay_ratio", "Update/Decay Ratio", log_scale=True,
-        min_epoch=min_epoch, max_epoch=max_epoch
+    update_decay_fig = create_multi_single_metric_plot(
+        experiments,
+        "update_decay_ratio",
+        "Update/Decay Ratio",
+        log_scale=True,
+        min_epoch=min_epoch,
+        max_epoch=max_epoch,
     )
 
     return effective_lr_fig, adam_ratio_fig, update_decay_fig
 
 
 def update_all_plots(
-    exp_path: str,
+    exp_paths: list[str] | str | None,
     min_epoch: int,
     max_epoch: int,
     selected_layer: str,
+    show_embeddings: bool = False,
 ) -> Tuple:
     """Update all analysis plots when experiment or controls change.
 
@@ -838,13 +1306,15 @@ def update_all_plots(
     - 6 weight plots (embed, b0_attn, b0_ffn, b1_attn, b1_ffn, output)
     - 5 curvature plots (jacobian, input_hessian, gradient, weight_hessian, fisher)
     - 3 Adam optimizer plots (effective_lr, adam_ratio, update_decay)
+
+    Supports multiple experiments for overlay comparison.
     """
-    dynamics_plots = update_training_dynamics_plots(exp_path, min_epoch, max_epoch)
+    dynamics_plots = update_training_dynamics_plots(exp_paths, min_epoch, max_epoch)
     weight_plots = update_weight_plots(
-        exp_path, min_epoch, max_epoch, selected_layer
+        exp_paths, min_epoch, max_epoch, selected_layer, show_embeddings
     )
-    curvature_plots = update_curvature_plots(exp_path, min_epoch, max_epoch)
-    adam_plots = update_adam_plots(exp_path, min_epoch, max_epoch)
+    curvature_plots = update_curvature_plots(exp_paths, min_epoch, max_epoch)
+    adam_plots = update_adam_plots(exp_paths, min_epoch, max_epoch)
 
     return dynamics_plots + weight_plots + curvature_plots + adam_plots
 
@@ -891,8 +1361,10 @@ def create_app() -> gr.Blocks:
                 )
                 exp_dropdown = gr.Dropdown(
                     choices=get_experiment_choices(),
-                    label="Experiment",
-                    info="Select an experiment to analyze",
+                    label="Experiments",
+                    info="Select up to 3 experiments to compare",
+                    multiselect=True,
+                    max_choices=3,
                 )
                 refresh_btn = gr.Button("Refresh Experiments", variant="secondary", size="sm")
 
@@ -911,7 +1383,7 @@ def create_app() -> gr.Blocks:
                     step=100,
                     value=10000,
                     label="Max Epoch",
-                    info="End of epoch range",
+                    info="End of epoch range (auto-set to grok step + buffer)",
                 )
 
             with gr.Column(scale=1):
@@ -921,15 +1393,17 @@ def create_app() -> gr.Blocks:
                     label="Layer",
                     info="Filter per-layer plots",
                 )
+                show_embeddings = gr.Checkbox(
+                    label="Show Embeddings",
+                    value=False,
+                    info="Include embedding layers in Weight Analysis",
+                )
 
         gr.Markdown("---")
 
         # ─── Section 3: Training Dynamics ───
         gr.Markdown("## Training Dynamics")
-        gr.Markdown(
-            "*Loss and accuracy curves over training. "
-            "Train (dotted), test (solid).*"
-        )
+        gr.Markdown("*Loss and accuracy curves over training. " "Train (dotted), test (solid).*")
         with gr.Row():
             loss_curves_plot = gr.Plot(label="Loss Curves")
             accuracy_curves_plot = gr.Plot(label="Accuracy Curves")
@@ -937,69 +1411,67 @@ def create_app() -> gr.Blocks:
 
         gr.Markdown("---")
 
-        # ─── Section 4: Weight Analysis ───
-        gr.Markdown("## Weight Analysis")
-        gr.Markdown(
-            "*Track how model weights evolve during training. "
-            "Weight norm growth often precedes grokking.*"
-        )
+        # ─── Tabbed Analysis Sections ───
+        with gr.Tabs():
+            # Tab 1: Weight Analysis
+            with gr.Tab("Weight Analysis"):
+                gr.Markdown(
+                    "*Track how model weights evolve during training. "
+                    "Weight norm growth often precedes grokking.*"
+                )
 
-        # Row 1: Embeddings
-        gr.Markdown("### Embeddings")
-        embed_plot = gr.Plot(label="Embeddings (tok_embed, pos_embed)")
+                # Row 1: Embeddings (hidden by default)
+                gr.Markdown("### Embeddings")
+                embed_plot = gr.Plot(label="Embeddings (tok_embed, pos_embed)")
 
-        # Row 2: Block 0
-        gr.Markdown("### Block 0")
-        with gr.Row():
-            b0_attn_plot = gr.Plot(label="Block 0: Attention (Q, K, V, Wo)")
-            b0_ffn_plot = gr.Plot(label="Block 0: FFN (up, down)")
+                # Row 2: Block 0
+                gr.Markdown("### Block 0")
+                with gr.Row():
+                    b0_attn_plot = gr.Plot(label="Block 0: Attention (Q, K, V, Wo)")
+                    b0_ffn_plot = gr.Plot(label="Block 0: FFN (up, down)")
 
-        # Row 3: Block 1
-        gr.Markdown("### Block 1")
-        with gr.Row():
-            b1_attn_plot = gr.Plot(label="Block 1: Attention (Q, K, V, Wo)")
-            b1_ffn_plot = gr.Plot(label="Block 1: FFN (up, down)")
+                # Row 3: Block 1
+                gr.Markdown("### Block 1")
+                with gr.Row():
+                    b1_attn_plot = gr.Plot(label="Block 1: Attention (Q, K, V, Wo)")
+                    b1_ffn_plot = gr.Plot(label="Block 1: FFN (up, down)")
 
-        # Row 4: Output
-        gr.Markdown("### Output")
-        output_plot = gr.Plot(label="Output Head")
+                # Row 4: Output
+                gr.Markdown("### Output")
+                output_plot = gr.Plot(label="Output Head")
 
-        gr.Markdown("---")
+            # Tab 2: Curvature Analysis
+            with gr.Tab("Curvature Analysis"):
+                gr.Markdown(
+                    "*Input sensitivity (∇ₓ) measures output change w.r.t. inputs. "
+                    "Weight curvature (∇ᵥ) measures loss landscape for generalization analysis.*"
+                )
 
-        # ─── Section 5: Curvature Analysis ───
-        gr.Markdown("## Curvature Analysis")
-        gr.Markdown(
-            "*Input sensitivity (∇ₓ) measures output change w.r.t. inputs. "
-            "Weight curvature (∇ᵥ) measures loss landscape for generalization analysis.*"
-        )
+                # Row 1: Input-sensitivity metrics
+                gr.Markdown("### Input Sensitivity")
+                with gr.Row():
+                    jacobian_plot = gr.Plot(label="Jacobian Norm (∇ₓf)")
+                    input_hessian_plot = gr.Plot(label="Input Hessian Trace (∇²ₓf)")
 
-        # Row 1: Input-sensitivity metrics
-        gr.Markdown("### Input Sensitivity")
-        with gr.Row():
-            jacobian_plot = gr.Plot(label="Jacobian Norm (∇ₓf)")
-            input_hessian_plot = gr.Plot(label="Input Hessian Trace (∇²ₓf)")
+                # Row 2: Weight-curvature metrics
+                gr.Markdown("### Weight Curvature (Loss Landscape)")
+                with gr.Row():
+                    gradient_norm_plot = gr.Plot(label="Gradient Norm (∇ᵥL)")
+                    weight_hessian_plot = gr.Plot(label="Weight Hessian (∇²ᵥL)")
+                    fisher_plot = gr.Plot(label="Fisher Trace (∇L·∇Lᵀ)")
 
-        # Row 2: Weight-curvature metrics
-        gr.Markdown("### Weight Curvature (Loss Landscape)")
-        with gr.Row():
-            gradient_norm_plot = gr.Plot(label="Gradient Norm (∇ᵥL)")
-            weight_hessian_plot = gr.Plot(label="Weight Hessian (∇²ᵥL)")
-            fisher_plot = gr.Plot(label="Fisher Trace (∇L·∇Lᵀ)")
-
-        gr.Markdown("---")
-
-        # ─── Section 6: Adam Optimizer Dynamics ───
-        gr.Markdown("## Adam Optimizer Dynamics")
-        gr.Markdown(
-            "*Internal state of Adam optimizer. "
-            "Effective LR shows adaptive learning rate scaling (√v_t). "
-            "Adam ratio shows signal-to-noise (|m|/√v). "
-            "Update/Decay ratio shows learning vs forgetting balance.*"
-        )
-        with gr.Row():
-            effective_lr_plot = gr.Plot(label="Effective LR (√v)")
-            adam_ratio_plot = gr.Plot(label="Adam Ratio (|m|/√v)")
-            update_decay_plot = gr.Plot(label="Update/Decay Ratio")
+            # Tab 3: Adam Optimizer Dynamics
+            with gr.Tab("Adam Optimizer"):
+                gr.Markdown(
+                    "*Internal state of Adam optimizer. "
+                    "Effective LR shows adaptive learning rate scaling (√v_t). "
+                    "Adam ratio shows signal-to-noise (|m|/√v). "
+                    "Update/Decay ratio shows learning vs forgetting balance.*"
+                )
+                with gr.Row():
+                    effective_lr_plot = gr.Plot(label="Effective LR (√v)")
+                    adam_ratio_plot = gr.Plot(label="Adam Ratio (|m|/√v)")
+                    update_decay_plot = gr.Plot(label="Update/Decay Ratio")
 
         # ─── Event Handlers ───
 
@@ -1032,10 +1504,14 @@ def create_app() -> gr.Blocks:
                 filtered = []
                 for display, path in all_choices:
                     exp = get_experiment(path)
-                    if exp and (selected_group == exp.group or
-                               (selected_group == "no group" and exp.group == "no group")):
+                    if exp and (
+                        selected_group == exp.group
+                        or (selected_group == "no group" and exp.group == "no group")
+                    ):
                         filtered.append((display, path))
-                dropdown_update = gr.update(choices=filtered if filtered else all_choices, value=None)
+                dropdown_update = gr.update(
+                    choices=filtered if filtered else all_choices, value=None
+                )
 
             # Update summary table with same filter
             table_fig = update_grokking_summary(selected_group)
@@ -1048,34 +1524,46 @@ def create_app() -> gr.Blocks:
         )
 
         # Experiment selection updates controls and all plots
-        def on_experiment_change(exp_path):
-            controls = update_experiment_controls(exp_path)
-            # Use default epoch range and layer for initial plots
-            if exp_path:
-                exp = get_experiment(exp_path)
-                if exp:
-                    max_step = int(exp.history_df["step"].max()) if not exp.history_df.empty else 10000
-                    plots = update_all_plots(exp_path, 0, max_step, "All")
-                    return controls + plots
-            empty = create_empty_figure("Select an experiment")
+        def on_experiment_change(exp_paths, show_emb):
+            controls = update_experiment_controls(exp_paths)
+            # Use intelligent default epoch range from controls
+            if exp_paths:
+                # Extract the computed default max_epoch from controls
+                default_max = controls[1].get("value", 10000)
+                plots = update_all_plots(exp_paths, 0, default_max, "All", show_emb)
+                return controls + plots
+            empty = create_empty_figure("Select experiment(s)")
             # 17 empty plots: 3 dynamics + 6 weight + 5 curvature + 3 adam
             return controls + (empty,) * 17
 
         exp_dropdown.change(
             fn=on_experiment_change,
-            inputs=[exp_dropdown],
+            inputs=[exp_dropdown, show_embeddings],
             outputs=[
-                min_epoch_slider, max_epoch_slider, layer_dropdown,
+                min_epoch_slider,
+                max_epoch_slider,
+                layer_dropdown,
                 # 3 training dynamics plots
-                loss_curves_plot, accuracy_curves_plot, learning_rate_plot,
+                loss_curves_plot,
+                accuracy_curves_plot,
+                learning_rate_plot,
                 # 6 weight plots
-                embed_plot, b0_attn_plot, b0_ffn_plot,
-                b1_attn_plot, b1_ffn_plot, output_plot,
+                embed_plot,
+                b0_attn_plot,
+                b0_ffn_plot,
+                b1_attn_plot,
+                b1_ffn_plot,
+                output_plot,
                 # 5 curvature plots
-                jacobian_plot, input_hessian_plot,
-                gradient_norm_plot, weight_hessian_plot, fisher_plot,
+                jacobian_plot,
+                input_hessian_plot,
+                gradient_norm_plot,
+                weight_hessian_plot,
+                fisher_plot,
                 # 3 Adam optimizer plots
-                effective_lr_plot, adam_ratio_plot, update_decay_plot,
+                effective_lr_plot,
+                adam_ratio_plot,
+                update_decay_plot,
             ],
         )
 
@@ -1084,28 +1572,66 @@ def create_app() -> gr.Blocks:
 
         # All weight plot outputs
         all_weight_plots = [
-            embed_plot, b0_attn_plot, b0_ffn_plot,
-            b1_attn_plot, b1_ffn_plot, output_plot,
+            embed_plot,
+            b0_attn_plot,
+            b0_ffn_plot,
+            b1_attn_plot,
+            b1_ffn_plot,
+            output_plot,
         ]
 
         # All plot outputs for epoch slider updates (17 total)
-        all_plot_outputs = all_dynamics_plots + all_weight_plots + [
-            jacobian_plot, input_hessian_plot,
-            gradient_norm_plot, weight_hessian_plot, fisher_plot,
-            # 3 Adam optimizer plots
-            effective_lr_plot, adam_ratio_plot, update_decay_plot,
-        ]
+        all_plot_outputs = (
+            all_dynamics_plots
+            + all_weight_plots
+            + [
+                jacobian_plot,
+                input_hessian_plot,
+                gradient_norm_plot,
+                weight_hessian_plot,
+                fisher_plot,
+                # 3 Adam optimizer plots
+                effective_lr_plot,
+                adam_ratio_plot,
+                update_decay_plot,
+            ]
+        )
 
         # Epoch sliders update all plots
         min_epoch_slider.release(
             fn=update_all_plots,
-            inputs=[exp_dropdown, min_epoch_slider, max_epoch_slider, layer_dropdown],
+            inputs=[
+                exp_dropdown,
+                min_epoch_slider,
+                max_epoch_slider,
+                layer_dropdown,
+                show_embeddings,
+            ],
             outputs=all_plot_outputs,
         )
 
         max_epoch_slider.release(
             fn=update_all_plots,
-            inputs=[exp_dropdown, min_epoch_slider, max_epoch_slider, layer_dropdown],
+            inputs=[
+                exp_dropdown,
+                min_epoch_slider,
+                max_epoch_slider,
+                layer_dropdown,
+                show_embeddings,
+            ],
+            outputs=all_plot_outputs,
+        )
+
+        # Show embeddings checkbox triggers weight plot update
+        show_embeddings.change(
+            fn=update_all_plots,
+            inputs=[
+                exp_dropdown,
+                min_epoch_slider,
+                max_epoch_slider,
+                layer_dropdown,
+                show_embeddings,
+            ],
             outputs=all_plot_outputs,
         )
 
