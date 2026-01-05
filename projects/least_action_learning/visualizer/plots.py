@@ -748,3 +748,381 @@ def create_multi_experiment_comparison(
         fig.update_yaxes(type="log")
 
     return fig
+
+
+# =============================================================================
+# Fourier Analysis Plots
+# =============================================================================
+
+
+def create_embedding_spectrum_plot(
+    freq_power: np.ndarray,
+    key_frequencies: list[int],
+    p: int,
+) -> go.Figure:
+    """Create bar chart of embedding Fourier power by frequency.
+
+    Args:
+        freq_power: [p] total power at each frequency
+        key_frequencies: List of key frequency indices to highlight
+        p: Prime modulus
+
+    Returns:
+        Plotly figure with bar chart
+    """
+    if freq_power is None or len(freq_power) == 0:
+        return create_empty_figure("No embedding spectrum data")
+
+    # Only show unique frequencies (k and p-k are conjugates)
+    max_k = (p + 1) // 2
+    x_vals = list(range(max_k))
+    y_vals = freq_power[:max_k].tolist()
+
+    # Color bars based on whether they're key frequencies
+    colors = ["#2ca02c" if k in key_frequencies else "#1f77b4" for k in range(max_k)]
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            x=x_vals,
+            y=y_vals,
+            marker_color=colors,
+            hovertemplate="Frequency k=%{x}<br>Power: %{y:.4g}<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        title=f"Embedding Fourier Spectrum (p={p})",
+        xaxis_title="Frequency k",
+        yaxis_title="Power (sum over d_model)",
+        height=350,
+        showlegend=False,
+    )
+
+    # Add annotation for key frequencies
+    if key_frequencies:
+        key_str = ", ".join(str(k) for k in sorted(key_frequencies)[:5])
+        fig.add_annotation(
+            x=0.98,
+            y=0.98,
+            xref="paper",
+            yref="paper",
+            text=f"Key: {key_str}",
+            showarrow=False,
+            bgcolor="rgba(255,255,255,0.8)",
+            bordercolor="#2ca02c",
+            borderwidth=1,
+        )
+
+    return fig
+
+
+def create_logit_spectrum_heatmap(
+    power_2d: np.ndarray,
+    p: int,
+) -> go.Figure:
+    """Create 2D heatmap of logit Fourier power spectrum.
+
+    Args:
+        power_2d: [p, p] 2D power spectrum
+        p: Prime modulus
+
+    Returns:
+        Plotly figure with heatmap
+    """
+    if power_2d is None or power_2d.size == 0:
+        return create_empty_figure("No logit spectrum data")
+
+    # Only show relevant portion (DC to p//2 in each dimension)
+    max_k = (p + 1) // 2
+    power_crop = power_2d[:max_k, :max_k]
+
+    # Log scale for better visualization
+    power_log = np.log10(power_crop + 1)
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Heatmap(
+            z=power_log,
+            x=list(range(max_k)),
+            y=list(range(max_k)),
+            colorscale="Hot",
+            colorbar=dict(title="log₁₀(P+1)"),
+            hovertemplate="k_a=%{y}, k_b=%{x}<br>log₁₀(Power+1): %{z:.2f}<extra></extra>",
+        )
+    )
+
+    # Add diagonal line annotation (where a+b signal lives)
+    fig.add_trace(
+        go.Scatter(
+            x=list(range(max_k)),
+            y=list(range(max_k)),
+            mode="lines",
+            line=dict(color="cyan", width=2, dash="dash"),
+            name="(a+b) diagonal",
+            hoverinfo="skip",
+        )
+    )
+
+    fig.update_layout(
+        title=f"2D Logit Fourier Spectrum (p={p})",
+        xaxis_title="Frequency k_b",
+        yaxis_title="Frequency k_a",
+        height=400,
+        yaxis=dict(scaleanchor="x", scaleratio=1),
+    )
+
+    return fig
+
+
+def create_logit_diagonal_plot(
+    diag_power: np.ndarray,
+    key_frequencies: list[int],
+    p: int,
+) -> go.Figure:
+    """Create line plot of power along the (a+b) diagonal frequencies.
+
+    Args:
+        diag_power: [p] power at each diagonal frequency
+        key_frequencies: Key frequency indices to highlight
+        p: Prime modulus
+
+    Returns:
+        Plotly figure with line plot and highlighted key frequencies
+    """
+    if diag_power is None or len(diag_power) == 0:
+        return create_empty_figure("No diagonal power data")
+
+    max_k = (p + 1) // 2
+    x_vals = list(range(max_k))
+    y_vals = diag_power[:max_k].tolist()
+
+    fig = go.Figure()
+
+    # Main line
+    fig.add_trace(
+        go.Scatter(
+            x=x_vals,
+            y=y_vals,
+            mode="lines+markers",
+            name="Diagonal power",
+            line=dict(color="#1f77b4", width=2),
+            marker=dict(size=6),
+            hovertemplate="k=%{x}<br>Power: %{y:.4g}<extra></extra>",
+        )
+    )
+
+    # Highlight key frequencies with larger markers
+    key_x = [k for k in key_frequencies if k < max_k]
+    key_y = [diag_power[k] for k in key_x]
+
+    if key_x:
+        fig.add_trace(
+            go.Scatter(
+                x=key_x,
+                y=key_y,
+                mode="markers",
+                name="Key frequencies",
+                marker=dict(color="#2ca02c", size=12, symbol="star"),
+                hovertemplate="Key k=%{x}<br>Power: %{y:.4g}<extra></extra>",
+            )
+        )
+
+    fig.update_layout(
+        title="Power Along (a+b) Diagonal",
+        xaxis_title="Frequency k",
+        yaxis_title="Power",
+        height=350,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+        ),
+    )
+
+    return fig
+
+
+def create_key_frequency_table(
+    key_frequencies: list[int],
+    freq_power: np.ndarray,
+    fve_per_freq: np.ndarray,
+    p: int,
+) -> go.Figure:
+    """Create table showing key frequencies with power and FVE.
+
+    Args:
+        key_frequencies: List of key frequency indices
+        freq_power: [p] power at each frequency
+        fve_per_freq: [p] FVE for each frequency
+        p: Prime modulus
+
+    Returns:
+        Plotly figure with table
+    """
+    if not key_frequencies:
+        return create_empty_figure("No key frequencies detected")
+
+    # Sort by power
+    sorted_freqs = sorted(key_frequencies, key=lambda k: freq_power[k], reverse=True)
+
+    # Build table data
+    k_vals = sorted_freqs
+    omega_vals = [f"2π·{k}/{p}" for k in sorted_freqs]
+    power_vals = [f"{freq_power[k]:.2e}" for k in sorted_freqs]
+    fve_vals = [f"{fve_per_freq[k]*100:.1f}%" for k in sorted_freqs]
+    cumulative_fve = np.cumsum([fve_per_freq[k] for k in sorted_freqs])
+    cum_fve_vals = [f"{v*100:.1f}%" for v in cumulative_fve]
+
+    fig = go.Figure(
+        data=[
+            go.Table(
+                header=dict(
+                    values=["k", "ω_k", "Power", "FVE", "Cumulative FVE"],
+                    fill_color="#343a40",
+                    font=dict(color="white", size=12),
+                    align="center",
+                ),
+                cells=dict(
+                    values=[k_vals, omega_vals, power_vals, fve_vals, cum_fve_vals],
+                    fill_color=[["#d4edda"] * len(k_vals)] * 5,
+                    align="center",
+                    height=25,
+                ),
+            )
+        ]
+    )
+
+    fig.update_layout(
+        title=f"Key Frequencies (p={p})",
+        height=min(300, 80 + len(key_frequencies) * 30),
+        margin=dict(l=10, r=10, t=40, b=10),
+    )
+
+    return fig
+
+
+def create_ablation_comparison(
+    full_loss: float,
+    full_accuracy: float,
+    restricted_loss: float,
+    restricted_accuracy: float,
+    excluded_loss: float,
+    excluded_accuracy: float,
+) -> go.Figure:
+    """Create grouped bar comparing full/restricted/excluded loss and accuracy.
+
+    Args:
+        full_loss: Loss with all frequencies
+        full_accuracy: Accuracy with all frequencies
+        restricted_loss: Loss with only key frequencies
+        restricted_accuracy: Accuracy with only key frequencies
+        excluded_loss: Loss without key frequencies
+        excluded_accuracy: Accuracy without key frequencies
+
+    Returns:
+        Plotly figure with grouped bars
+    """
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        subplot_titles=("Cross-Entropy Loss", "Accuracy"),
+    )
+
+    categories = ["Full", "Restricted", "Excluded"]
+    colors = ["#1f77b4", "#2ca02c", "#d62728"]
+
+    # Loss bars (left subplot)
+    losses = [full_loss, restricted_loss, excluded_loss]
+    fig.add_trace(
+        go.Bar(
+            x=categories,
+            y=losses,
+            marker_color=colors,
+            text=[f"{v:.3f}" for v in losses],
+            textposition="outside",
+            hovertemplate="%{x}<br>Loss: %{y:.4f}<extra></extra>",
+            showlegend=False,
+        ),
+        row=1,
+        col=1,
+    )
+
+    # Accuracy bars (right subplot)
+    accuracies = [full_accuracy, restricted_accuracy, excluded_accuracy]
+    fig.add_trace(
+        go.Bar(
+            x=categories,
+            y=[a * 100 for a in accuracies],
+            marker_color=colors,
+            text=[f"{v*100:.1f}%" for v in accuracies],
+            textposition="outside",
+            hovertemplate="%{x}<br>Accuracy: %{y:.1f}%<extra></extra>",
+            showlegend=False,
+        ),
+        row=1,
+        col=2,
+    )
+
+    fig.update_layout(
+        title="Frequency Ablation Results",
+        height=350,
+    )
+
+    # Log scale for loss
+    fig.update_yaxes(type="log", title_text="Loss", row=1, col=1)
+    fig.update_yaxes(range=[0, 105], title_text="Accuracy (%)", row=1, col=2)
+
+    return fig
+
+
+def create_fve_breakdown_plot(
+    fve_per_freq: np.ndarray,
+    key_frequencies: list[int],
+    p: int,
+) -> go.Figure:
+    """Create bar chart showing FVE per frequency.
+
+    Args:
+        fve_per_freq: [p] FVE for each frequency
+        key_frequencies: Key frequency indices to highlight
+        p: Prime modulus
+
+    Returns:
+        Plotly figure with bar chart and total FVE annotation
+    """
+    if fve_per_freq is None or len(fve_per_freq) == 0:
+        return create_empty_figure("No FVE data")
+
+    max_k = (p + 1) // 2
+    x_vals = list(range(max_k))
+    y_vals = (fve_per_freq[:max_k] * 100).tolist()  # Convert to percentage
+
+    # Color bars based on whether they're key frequencies
+    colors = ["#2ca02c" if k in key_frequencies else "#1f77b4" for k in range(max_k)]
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            x=x_vals,
+            y=y_vals,
+            marker_color=colors,
+            hovertemplate="k=%{x}<br>FVE: %{y:.2f}%<extra></extra>",
+        )
+    )
+
+    # Calculate total FVE for key frequencies
+    total_fve = sum(fve_per_freq[k] for k in key_frequencies if k < len(fve_per_freq))
+
+    fig.update_layout(
+        title=f"Fraction of Variance Explained (Total Key: {total_fve*100:.1f}%)",
+        xaxis_title="Frequency k",
+        yaxis_title="FVE (%)",
+        height=350,
+        showlegend=False,
+    )
+
+    return fig

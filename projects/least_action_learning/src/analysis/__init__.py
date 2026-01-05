@@ -54,6 +54,17 @@ from .comparison import (
     group_by_hyperparameter,
     create_sweep_summary,
 )
+from .frequency import (
+    EmbeddingSpectrum,
+    LogitSpectrum,
+    AblationResults,
+    compute_fourier_basis,
+    compute_embedding_spectrum,
+    compute_logit_spectrum,
+    identify_key_frequencies,
+    compute_ablation_metrics,
+    analyze_checkpoint_frequency,
+)
 
 __all__ = [
     # loader
@@ -80,4 +91,14 @@ __all__ = [
     "compute_metric_deltas",
     "group_by_hyperparameter",
     "create_sweep_summary",
+    # frequency
+    "EmbeddingSpectrum",
+    "LogitSpectrum",
+    "AblationResults",
+    "compute_fourier_basis",
+    "compute_embedding_spectrum",
+    "compute_logit_spectrum",
+    "identify_key_frequencies",
+    "compute_ablation_metrics",
+    "analyze_checkpoint_frequency",
 ]

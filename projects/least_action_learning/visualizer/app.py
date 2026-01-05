@@ -16,7 +16,15 @@ from .data import (
     load_experiment,
     load_sweep_groups,
 )
-from .plots import create_grokking_summary_table
+from .plots import (
+    create_grokking_summary_table,
+    create_embedding_spectrum_plot,
+    create_logit_spectrum_heatmap,
+    create_logit_diagonal_plot,
+    create_key_frequency_table,
+    create_ablation_comparison,
+    create_fve_breakdown_plot,
+)
 from .helpers import create_empty_figure, filter_by_epoch_range, get_valid_data
 from .styles import CATEGORICAL_COLORS
 
@@ -29,6 +37,8 @@ try:
         get_layer_choices,
     )
     from ..src.analysis.phases import analyze_grokking
+    from ..src.analysis.frequency import analyze_checkpoint_frequency
+    from ..src.analysis.loader import ExperimentLoader
 except ImportError:
     from src.analysis.architecture import (
         get_layer_groups,
@@ -36,6 +46,8 @@ except ImportError:
         get_layer_choices,
     )
     from src.analysis.phases import analyze_grokking
+    from src.analysis.frequency import analyze_checkpoint_frequency
+    from src.analysis.loader import ExperimentLoader
 
 
 # Cache for loaded experiments
@@ -1478,6 +1490,61 @@ def create_app() -> gr.Blocks:
                     adam_ratio_plot = gr.Plot(label="Adam Ratio (|m|/√v)")
                     update_decay_plot = gr.Plot(label="Update/Decay Ratio")
 
+            # Tab 4: Fourier Analysis
+            with gr.Tab("Fourier Analysis"):
+                gr.Markdown(
+                    "*Mechanistic interpretability via Fourier analysis. "
+                    "Based on Nanda et al. 'Progress measures for grokking' (ICLR 2023). "
+                    "Shows how the model learns key frequencies for modular arithmetic.*"
+                )
+
+                # Controls row
+                with gr.Row():
+                    fourier_checkpoint_dropdown = gr.Dropdown(
+                        label="Checkpoint",
+                        choices=["best"],
+                        value="best",
+                        info="Select checkpoint to analyze",
+                    )
+                    fourier_threshold_slider = gr.Slider(
+                        minimum=0.05,
+                        maximum=0.50,
+                        step=0.05,
+                        value=0.15,
+                        label="Key Frequency Threshold",
+                        info="Fraction of max power to consider key",
+                    )
+                    fourier_analyze_btn = gr.Button("Analyze", variant="primary")
+
+                # Status display
+                fourier_status = gr.Textbox(
+                    label="Analysis Status",
+                    interactive=False,
+                    value="Select an experiment and click Analyze",
+                )
+
+                # Embedding spectrum
+                gr.Markdown("### Embedding Fourier Spectrum")
+                with gr.Row():
+                    fourier_embedding_plot = gr.Plot(label="Embedding Power by Frequency")
+
+                # Logit spectrum
+                gr.Markdown("### Logit Fourier Spectrum")
+                with gr.Row():
+                    fourier_logit_2d_plot = gr.Plot(label="2D Power Spectrum")
+                    fourier_logit_diagonal_plot = gr.Plot(label="Power Along (a+b) Diagonal")
+
+                # Key frequencies & ablation
+                gr.Markdown("### Key Frequency Analysis")
+                with gr.Row():
+                    fourier_key_freq_table = gr.Plot(label="Key Frequencies")
+                    fourier_ablation_plot = gr.Plot(label="Ablation Results")
+
+                # FVE summary
+                gr.Markdown("### Variance Explained")
+                with gr.Row():
+                    fourier_fve_plot = gr.Plot(label="Fraction of Variance Explained")
+
         # ─── Event Handlers ───
 
         # Initialize summary table on load
@@ -1651,6 +1718,197 @@ def create_app() -> gr.Blocks:
 
         # Layer dropdown no longer affects weight plots (they're now pre-split by group)
         # Keep dropdown for future per-layer curvature metrics if needed
+
+        # ─── Fourier Analysis Event Handlers ───
+
+        def update_fourier_checkpoints(exp_paths: list[str] | str | None):
+            """Update checkpoint dropdown when experiment changes."""
+            if not exp_paths:
+                return gr.update(choices=["best"], value="best")
+
+            if isinstance(exp_paths, str):
+                exp_paths = [exp_paths]
+
+            # Use first experiment for checkpoints
+            exp = get_experiment(exp_paths[0])
+            if not exp or not exp.output_dir:
+                return gr.update(choices=["best"], value="best")
+
+            # List available checkpoints
+            loader = ExperimentLoader(exp.output_dir.parent)
+            try:
+                epochs = loader.list_checkpoints(exp)
+                choices = ["best"] + [str(e) for e in sorted(epochs)]
+            except Exception:
+                choices = ["best"]
+
+            return gr.update(choices=choices, value="best")
+
+        def run_fourier_analysis(
+            exp_paths: list[str] | str | None,
+            checkpoint: str,
+            threshold: float,
+        ):
+            """Run Fourier analysis and update all plots."""
+            empty = create_empty_figure("Run analysis to see results")
+
+            if not exp_paths:
+                return (
+                    "Select an experiment first",
+                    empty,
+                    empty,
+                    empty,
+                    empty,
+                    empty,
+                    empty,
+                )
+
+            if isinstance(exp_paths, str):
+                exp_paths = [exp_paths]
+
+            exp = get_experiment(exp_paths[0])
+            if not exp:
+                return (
+                    "Failed to load experiment",
+                    empty,
+                    empty,
+                    empty,
+                    empty,
+                    empty,
+                    empty,
+                )
+
+            # Check model type
+            model_type = exp.config.get("model_type", "transformer")
+            if model_type != "transformer":
+                return (
+                    f"Fourier analysis only supports transformer models (got {model_type})",
+                    empty,
+                    empty,
+                    empty,
+                    empty,
+                    empty,
+                    empty,
+                )
+
+            try:
+                # Parse checkpoint epoch
+                epoch = None if checkpoint == "best" else int(checkpoint)
+
+                # Run analysis
+                import torch
+
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+                results = analyze_checkpoint_frequency(
+                    exp,
+                    epoch=epoch,
+                    threshold=threshold,
+                    device=device,
+                )
+
+                # Extract results
+                emb_spectrum = results["embedding_spectrum"]
+                logit_spectrum = results["logit_spectrum"]
+                ablation = results["ablation_results"]
+                p = exp.p
+
+                # Create plots
+                emb_fig = create_embedding_spectrum_plot(
+                    emb_spectrum.freq_power,
+                    emb_spectrum.key_frequencies,
+                    p,
+                )
+
+                logit_2d_fig = create_logit_spectrum_heatmap(
+                    logit_spectrum.power_2d,
+                    p,
+                )
+
+                logit_diag_fig = create_logit_diagonal_plot(
+                    logit_spectrum.diag_power,
+                    logit_spectrum.key_frequencies,
+                    p,
+                )
+
+                key_freq_fig = create_key_frequency_table(
+                    logit_spectrum.key_frequencies,
+                    logit_spectrum.diag_power,
+                    logit_spectrum.fve_per_freq,
+                    p,
+                )
+
+                ablation_fig = create_ablation_comparison(
+                    ablation.full_loss,
+                    ablation.full_accuracy,
+                    ablation.restricted_loss,
+                    ablation.restricted_accuracy,
+                    ablation.excluded_loss,
+                    ablation.excluded_accuracy,
+                )
+
+                fve_fig = create_fve_breakdown_plot(
+                    logit_spectrum.fve_per_freq,
+                    logit_spectrum.key_frequencies,
+                    p,
+                )
+
+                # Build status message
+                key_freqs_str = ", ".join(str(k) for k in logit_spectrum.key_frequencies[:5])
+                status = (
+                    f"Analysis complete for {exp.name} (p={p})\n"
+                    f"Key frequencies: {key_freqs_str}\n"
+                    f"Total FVE: {logit_spectrum.fve_total*100:.1f}%\n"
+                    f"Full accuracy: {ablation.full_accuracy*100:.1f}%, "
+                    f"Restricted: {ablation.restricted_accuracy*100:.1f}%, "
+                    f"Excluded: {ablation.excluded_accuracy*100:.1f}%"
+                )
+
+                return (
+                    status,
+                    emb_fig,
+                    logit_2d_fig,
+                    logit_diag_fig,
+                    key_freq_fig,
+                    ablation_fig,
+                    fve_fig,
+                )
+
+            except Exception as e:
+                import traceback
+
+                error_msg = f"Analysis failed: {str(e)}\n{traceback.format_exc()}"
+                return (
+                    error_msg,
+                    empty,
+                    empty,
+                    empty,
+                    empty,
+                    empty,
+                    empty,
+                )
+
+        # Update checkpoint dropdown when experiment changes
+        exp_dropdown.change(
+            fn=update_fourier_checkpoints,
+            inputs=[exp_dropdown],
+            outputs=[fourier_checkpoint_dropdown],
+        )
+
+        # Run analysis when button clicked
+        fourier_analyze_btn.click(
+            fn=run_fourier_analysis,
+            inputs=[exp_dropdown, fourier_checkpoint_dropdown, fourier_threshold_slider],
+            outputs=[
+                fourier_status,
+                fourier_embedding_plot,
+                fourier_logit_2d_plot,
+                fourier_logit_diagonal_plot,
+                fourier_key_freq_table,
+                fourier_ablation_plot,
+                fourier_fve_plot,
+            ],
+        )
 
     return app
 
