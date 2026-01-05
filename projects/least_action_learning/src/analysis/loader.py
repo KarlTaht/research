@@ -70,6 +70,11 @@ class ExperimentData:
         return self.config.get("weight_decay", 1.0)
 
     @property
+    def train_frac(self) -> float:
+        """Train fraction from config."""
+        return self.config.get("train_frac", 0.5)
+
+    @property
     def max_epoch(self) -> int:
         """Maximum epoch in history."""
         if self.history_df.empty:

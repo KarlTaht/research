@@ -45,6 +45,7 @@ class GrokkingAnalysis:
         name: Experiment name
         group: Sweep group name
         p: Prime modulus
+        train_frac: Train/test split fraction
         lr: Learning rate
         weight_decay: Weight decay value
 
@@ -61,6 +62,7 @@ class GrokkingAnalysis:
     name: str
     group: str
     p: int
+    train_frac: float
     lr: float
     weight_decay: float
     grok_step: Optional[int]
@@ -167,9 +169,7 @@ def analyze_grokking(
             pct_train_above = (
                 100.0 * (post_grok_df["train_acc"] >= train_thresh).sum() / n_post_grok
             )
-            pct_test_above = (
-                100.0 * (post_grok_df["test_acc"] >= test_thresh).sum() / n_post_grok
-            )
+            pct_test_above = 100.0 * (post_grok_df["test_acc"] >= test_thresh).sum() / n_post_grok
             test_variance = float(post_grok_df["test_acc"].var()) if n_post_grok > 1 else 0.0
         else:
             pct_train_above = 0.0
@@ -185,6 +185,7 @@ def analyze_grokking(
         name=experiment.name,
         group=group,
         p=experiment.p,
+        train_frac=experiment.train_frac,
         lr=experiment.lr,
         weight_decay=experiment.weight_decay,
         grok_step=int(grok_step) if grok_step is not None and not pd.isna(grok_step) else None,
@@ -215,9 +216,7 @@ def analyze_all_experiments(
     if not experiments:
         return pd.DataFrame()
 
-    analyses = [
-        analyze_grokking(exp, train_thresh, test_thresh) for exp in experiments.values()
-    ]
+    analyses = [analyze_grokking(exp, train_thresh, test_thresh) for exp in experiments.values()]
 
     df = pd.DataFrame([asdict(a) for a in analyses])
 

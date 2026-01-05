@@ -1,23 +1,20 @@
 """Plotly visualization functions for routing analysis."""
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import torch
 from torch import Tensor
 
 from .styles import (
     CATEGORICAL_COLORS,
     HEAD_COLORS,
-    METRIC_DISPLAY_NAMES,
-    LOG_SCALE_METRICS,
     get_metric_display_name,
     should_use_log_scale,
 )
-from .helpers import create_empty_figure, get_valid_data, filter_by_epoch_range
+from .helpers import create_empty_figure, get_valid_data
 
 if TYPE_CHECKING:
     from .data import ExperimentRun
@@ -461,7 +458,7 @@ def create_grokking_summary_table(analysis_df: pd.DataFrame) -> go.Figure:
         analysis_df: DataFrame from analyze_all_experiments()
 
     Returns:
-        Plotly figure with table including ID and Group columns
+        Plotly figure with table including ID, Group, and Split columns
     """
     if analysis_df.empty:
         return create_empty_figure("No experiments to analyze")
@@ -476,44 +473,38 @@ def create_grokking_summary_table(analysis_df: pd.DataFrame) -> go.Figure:
     if "group" not in df.columns:
         df["group"] = "no group"
 
+    # Format train_frac as train/test ratio (e.g., "50/50" or "30/70")
+    if "train_frac" in df.columns:
+        df["Split"] = df["train_frac"].apply(
+            lambda x: f"{int(x*100)}/{int((1-x)*100)}" if pd.notna(x) else "50/50"
+        )
+    else:
+        df["Split"] = "50/50"
+
     df["Train≥98%"] = df["pct_train_above_98"].apply(lambda x: f"{x:.1f}%")
     df["Test≥95%"] = df["pct_test_above_95"].apply(lambda x: f"{x:.1f}%")
     df["Final Test"] = (df["final_test_acc"] * 100).round(1).astype(str) + "%"
     df["Variance"] = df["test_variance"].apply(
         lambda x: f"{x:.2e}" if pd.notna(x) and x > 0 else "-"
     )
-    df["Grok Step"] = df["grok_step"].apply(
-        lambda x: str(int(x)) if pd.notna(x) else "-"
-    )
+    df["Grok Step"] = df["grok_step"].apply(lambda x: str(int(x)) if pd.notna(x) else "-")
     df["lr_fmt"] = df["lr"].apply(lambda x: f"{x:.0e}" if x > 0 else "-")
     df["wd_fmt"] = df["weight_decay"].apply(lambda x: f"{x:.1f}" if x > 0 else "-")
 
-    # Color palette for groups
-    group_colors = {
-        "no group": "#e9ecef",        # Light gray for ungrouped
-        "transformer_sweep": "#cce5ff",  # Light blue
-        "sweep": "#d4edda",           # Light green
-    }
-
-    # Get unique groups and assign colors to any new ones
-    extra_colors = ["#f8d7da", "#fff3cd", "#d1c4e9", "#ffccbc", "#b2dfdb"]
-    unique_groups = df["group"].unique()
-    for i, group in enumerate(unique_groups):
-        if group not in group_colors:
-            group_colors[group] = extra_colors[i % len(extra_colors)]
-
-    # Row colors: combine group color with performance gradient
-    def get_row_color(group, pct):
-        base_color = group_colors.get(group, "#e9ecef")
-        # Darken/adjust based on performance
-        if pct >= 90:
-            return base_color  # Keep group color for good performance
-        elif pct >= 50:
-            return "#fff3cd"  # Yellow for moderate
+    # Row colors based on grokking status
+    # Green for grokked (test≥95% for most of post-grok period)
+    # Yellow for partial/in-progress
+    # Red for not grokked
+    def get_row_color(grok_step, pct_test):
+        has_grokked = pd.notna(grok_step)
+        if has_grokked and pct_test >= 90:
+            return "#d4edda"  # Light green - successfully grokked
+        elif has_grokked or pct_test >= 50:
+            return "#fff3cd"  # Yellow - partial/in-progress
         else:
-            return "#f8d7da"  # Red for poor
+            return "#f8d7da"  # Light red - not grokked
 
-    row_colors = [[get_row_color(g, p) for g, p in zip(df["group"], df["pct_test_above_95"])]]
+    row_colors = [[get_row_color(g, p) for g, p in zip(df["grok_step"], df["pct_test_above_95"])]]
 
     fig = go.Figure(
         data=[
@@ -524,6 +515,7 @@ def create_grokking_summary_table(analysis_df: pd.DataFrame) -> go.Figure:
                         "Group",
                         "Name",
                         "p",
+                        "Split",
                         "lr",
                         "wd",
                         "Grok Step",
@@ -543,6 +535,7 @@ def create_grokking_summary_table(analysis_df: pd.DataFrame) -> go.Figure:
                         df["group"],
                         df["name"],
                         df["p"],
+                        df["Split"],
                         df["lr_fmt"],
                         df["wd_fmt"],
                         df["Grok Step"],
@@ -551,7 +544,7 @@ def create_grokking_summary_table(analysis_df: pd.DataFrame) -> go.Figure:
                         df["Final Test"],
                         df["Variance"],
                     ],
-                    fill_color=row_colors * 11,  # Repeat for all columns
+                    fill_color=row_colors * 12,  # Repeat for all columns
                     align="left",
                     height=25,
                     font=dict(size=11),
