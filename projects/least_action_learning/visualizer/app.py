@@ -1104,7 +1104,7 @@ def update_weight_plots(
     model_type = first_exp.config.get("model_type", "transformer")
     groups = get_layer_groups(model_type, n_layers)
 
-    # Embeddings plot - conditionally show based on toggle
+    # Embeddings plot - only create when visible (section is hidden entirely when unchecked)
     if show_embeddings:
         emb_indices, emb_names = groups["embeddings"]
         embed_fig = create_multi_weight_group_plot(
@@ -1116,7 +1116,8 @@ def update_weight_plots(
             max_epoch=max_epoch,
         )
     else:
-        embed_fig = create_empty_figure("Embeddings hidden (toggle above to show)")
+        # Section is hidden, no need to render anything
+        embed_fig = None
 
     # Block plots via loop (attention then FFN for each block)
     block_figs = []
@@ -1420,9 +1421,11 @@ def create_app() -> gr.Blocks:
                     "Weight norm growth often precedes grokking.*"
                 )
 
-                # Row 1: Embeddings (hidden by default)
-                gr.Markdown("### Embeddings")
-                embed_plot = gr.Plot(label="Embeddings (tok_embed, pos_embed)")
+                # Row 1: Embeddings (hidden by default, wrapped in Column for visibility toggle)
+                embed_section = gr.Column(visible=False)
+                with embed_section:
+                    gr.Markdown("### Embeddings")
+                    embed_plot = gr.Plot(label="Embeddings (tok_embed, pos_embed)")
 
                 # Row 2: Block 0
                 gr.Markdown("### Block 0")
@@ -1622,7 +1625,16 @@ def create_app() -> gr.Blocks:
             outputs=all_plot_outputs,
         )
 
-        # Show embeddings checkbox triggers weight plot update
+        # Show embeddings checkbox toggles section visibility and updates plots
+        def toggle_embeddings_section(show: bool):
+            return gr.update(visible=show)
+
+        show_embeddings.change(
+            fn=toggle_embeddings_section,
+            inputs=[show_embeddings],
+            outputs=[embed_section],
+        )
+
         show_embeddings.change(
             fn=update_all_plots,
             inputs=[
