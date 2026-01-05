@@ -335,12 +335,17 @@ ruff check . --fix
 mypy common/  # if type hints were modified
 ```
 
-### 4. Commit and Push
-Once tests pass and code is clean:
+### 4. Prompt to Commit and Push
+Once tests pass and code is clean, **always ask the user** if they'd like to commit the changes:
+```
+"Tests pass and linting is clean. Would you like me to commit and push these changes?"
+```
+
+If the user agrees:
 ```bash
 git add <relevant files>
 git commit -m "<descriptive message>"
 git push
 ```
 
-**Important**: Do not ask for permission to run tests or commit after plan execution - these are expected steps. Only ask if there are unresolved test failures or merge conflicts that require user input.
+**Important**: Do not ask for permission to run tests or linting - these are expected steps. However, always prompt before committing. Only skip asking about test failures or merge conflicts if they require user input to resolve.
