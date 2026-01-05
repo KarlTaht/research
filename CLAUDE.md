@@ -303,3 +303,44 @@ See `projects/custom_transformer/` for a complete working example.
 - **Use symlinks** to share datasets across projects
 - **Per-project Docker**: Each project can have its own `docker/` subdirectory (not root-level)
 - **Line length**: 100 characters (black/ruff configured)
+
+## Plan Execution Workflow
+
+When executing a plan (after exiting plan mode), ALWAYS complete these steps before considering the task done:
+
+### 1. Run Tests
+After implementing changes, run the relevant test suite:
+```bash
+# For the main common package
+pytest common/
+
+# For specific projects
+pytest projects/<project_name>/
+
+# Or run all tests
+pytest
+```
+
+### 2. Address Test Failures
+If tests fail:
+- Fix the failing tests or the code causing failures
+- Re-run tests until they pass
+- Do not skip this step - all tests must pass before committing
+
+### 3. Run Linting/Formatting
+Ensure code quality:
+```bash
+black .
+ruff check . --fix
+mypy common/  # if type hints were modified
+```
+
+### 4. Commit and Push
+Once tests pass and code is clean:
+```bash
+git add <relevant files>
+git commit -m "<descriptive message>"
+git push
+```
+
+**Important**: Do not ask for permission to run tests or commit after plan execution - these are expected steps. Only ask if there are unresolved test failures or merge conflicts that require user input.
