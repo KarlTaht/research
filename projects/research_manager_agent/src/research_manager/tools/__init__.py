@@ -9,6 +9,13 @@ from research_manager.tools.registry import (
 )
 from research_manager.tools.decorators import tool
 
+# Import tool modules to trigger registration
+from research_manager.tools import explore  # noqa: F401
+from research_manager.tools import projects  # noqa: F401
+from research_manager.tools import scripts  # noqa: F401
+from research_manager.tools import configs  # noqa: F401
+from research_manager.tools import experiments  # noqa: F401
+
 __all__ = [
     "ToolRegistry",
     "ToolSpec",

@@ -33,7 +33,7 @@ pytest tests/
 
 ## Current Status
 
-**Phase 2: Codebase Tools - COMPLETE**
+**Phase 3: Experiment Tools - COMPLETE**
 
 ---
 
@@ -79,18 +79,26 @@ Tools for understanding the repository structure.
 
 **Tests:** 114 unit tests passing
 
-### Phase 3: Experiment Tools (NOT STARTED)
+### Phase 3: Experiment Tools (COMPLETE)
 
 Tools for querying and analyzing experiments.
 
 | Tool | Status | Purpose |
 |------|--------|---------|
-| `query_experiments` | Pending | Natural language + SQL queries |
-| `analyze_logs` | Pending | Parse training logs |
-| `find_checkpoint` | Pending | Locate model checkpoints |
-| `compare_runs` | Pending | Side-by-side comparison |
+| `query_experiments` | Done | Natural language + SQL queries |
+| `list_experiments` | Done | List available experiments |
+| `analyze_logs` | Done | Parse training logs |
+| `find_checkpoint` | Done | Locate model checkpoints |
+| `compare_runs` | Done | Side-by-side comparison |
 
-**Skill:** `experiment-analysis` - Claude Agent Skill for experiment queries
+**Features:**
+- Natural language query conversion (e.g., "best perplexity" → SQL)
+- Log metric extraction (loss, perplexity, accuracy)
+- Error and warning detection in logs
+- Checkpoint file discovery with metadata
+- Multi-experiment comparison with best performer identification
+
+**Tests:** 150 unit tests passing (36 new experiment tests)
 
 ### Phase 4: Assistant Tools (NOT STARTED)
 
@@ -235,7 +243,6 @@ mypy src/
 
 ## Next Steps
 
-1. **Phase 2**: Implement codebase tools (`explore_repo`, `list_projects`, etc.)
-2. **Skills**: Create `.claude/skills/` with SKILL.md files
-3. **Claude SDK**: Integrate full agent loop with Claude Agent SDK
-4. **Eval Framework**: Add integration tests, E2E scenarios, benchmarks
+1. **Phase 4**: Implement assistant tools (`run_command`, `suggest_cleanup`, `explain_error`)
+2. **Phase 5**: Add integration tests and E2E scenarios
+3. **Phase 6**: Claude Agent SDK integration, benchmarks, regression tracking
