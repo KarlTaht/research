@@ -509,8 +509,7 @@ async def explain_error(
     traceback_files = re.findall(r'File "([^"]+)", line (\d+)', error)
     if traceback_files:
         result["traceback_locations"] = [
-            {"file": fname, "line": int(line_num)}
-            for fname, line_num in traceback_files[:5]
+            {"file": fname, "line": int(line_num)} for fname, line_num in traceback_files[:5]
         ]
 
     # Add context-specific suggestions

@@ -33,7 +33,7 @@ pytest tests/
 
 ## Current Status
 
-**Phase 4: Assistant Tools - COMPLETE**
+**Phase 5: Safety & Observability - COMPLETE**
 
 ---
 
@@ -120,17 +120,37 @@ Tools for interactive assistance.
 
 **Tests:** 183 unit tests passing (33 new assistant tests)
 
-### Phase 5: Safety & Observability (PARTIAL)
+### Phase 5: Safety & Observability (COMPLETE)
 
-Safety and monitoring infrastructure.
+Safety, monitoring, and test infrastructure.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Safety hooks | Done | Blocks dangerous commands |
 | Audit logging | Done | Tracks all tool calls |
 | Terminal UI | Done | Rich-based interface |
-| Integration tests | Pending | Tool combinations |
-| E2E tests | Pending | Full agent scenarios |
+| Integration tests | Done | 6 tool combination workflows |
+| E2E tests | Done | 10 complete user scenarios |
+
+**Integration Tests (6 workflows):**
+- Explore → Train workflow
+- Experiment analysis workflow
+- Error debugging workflow
+- Cleanup workflow
+- Script discovery workflow
+- Config comparison workflow
+
+**E2E Scenarios (10 tests):**
+- New user onboarding
+- Researcher analyzing experiments
+- Debugging failed experiments
+- Preparing new experiments
+- Safety blocking dangerous commands
+- Audit logging verification
+- Cleanup suggestions
+- Error handling (missing projects, invalid configs, complex errors)
+
+**Tests:** 199 total (183 unit + 16 integration/E2E)
 
 ### Phase 6: Polish & Integration (NOT STARTED)
 
@@ -251,5 +271,4 @@ mypy src/
 
 ## Next Steps
 
-1. **Phase 5**: Add integration tests and E2E scenarios
-2. **Phase 6**: Claude Agent SDK integration, benchmarks, regression tracking
+1. **Phase 6**: Claude Agent SDK integration, benchmarks, regression tracking
