@@ -33,7 +33,7 @@ pytest tests/
 
 ## Current Status
 
-**Phase 3: Experiment Tools - COMPLETE**
+**Phase 4: Assistant Tools - COMPLETE**
 
 ---
 
@@ -100,17 +100,25 @@ Tools for querying and analyzing experiments.
 
 **Tests:** 150 unit tests passing (36 new experiment tests)
 
-### Phase 4: Assistant Tools (NOT STARTED)
+### Phase 4: Assistant Tools (COMPLETE)
 
 Tools for interactive assistance.
 
 | Tool | Status | Purpose |
 |------|--------|---------|
-| `run_command` | Pending | Generate and execute commands |
-| `suggest_cleanup` | Pending | Identify organizational issues |
-| `explain_error` | Pending | Context-aware error explanation |
+| `run_command` | Done | Execute commands with safety checks |
+| `suggest_cleanup` | Done | Find old checkpoints, logs, large files |
+| `explain_error` | Done | Context-aware error explanation |
+| `generate_train_command` | Done | Generate training commands |
 
-**Skill:** `training-assistant` - Claude Agent Skill for training help
+**Features:**
+- Command execution with safety hooks (blocks dangerous commands)
+- Cleanup suggestions for checkpoints, logs, cache, large files
+- Error pattern matching for 10+ common ML errors (CUDA OOM, NaN, etc.)
+- Traceback parsing with file/line extraction
+- Training command generation with config overrides
+
+**Tests:** 183 unit tests passing (33 new assistant tests)
 
 ### Phase 5: Safety & Observability (PARTIAL)
 
@@ -243,6 +251,5 @@ mypy src/
 
 ## Next Steps
 
-1. **Phase 4**: Implement assistant tools (`run_command`, `suggest_cleanup`, `explain_error`)
-2. **Phase 5**: Add integration tests and E2E scenarios
-3. **Phase 6**: Claude Agent SDK integration, benchmarks, regression tracking
+1. **Phase 5**: Add integration tests and E2E scenarios
+2. **Phase 6**: Claude Agent SDK integration, benchmarks, regression tracking

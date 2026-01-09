@@ -15,6 +15,7 @@ from research_manager.tools import projects  # noqa: F401
 from research_manager.tools import scripts  # noqa: F401
 from research_manager.tools import configs  # noqa: F401
 from research_manager.tools import experiments  # noqa: F401
+from research_manager.tools import assistant  # noqa: F401
 
 __all__ = [
     "ToolRegistry",
