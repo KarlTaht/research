@@ -124,12 +124,20 @@ def create_training_curves(history_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def create_routing_entropy_curve(history_df: pd.DataFrame) -> go.Figure:
+def create_routing_entropy_curve(
+    history_df: pd.DataFrame,
+    n_heads: int = 4,
+    min_epoch: int = 0,
+    max_epoch: int = 100000,
+) -> go.Figure:
     """
     Create plot of routing entropy over training.
 
     Args:
         history_df: DataFrame with step and routing_entropy columns
+        n_heads: Number of routing heads (for max entropy line)
+        min_epoch: Start of epoch range
+        max_epoch: End of epoch range
 
     Returns:
         Plotly figure
@@ -137,7 +145,10 @@ def create_routing_entropy_curve(history_df: pd.DataFrame) -> go.Figure:
     if history_df.empty or "routing_entropy" not in history_df.columns:
         return create_empty_figure("No routing entropy data")
 
-    entropy = history_df["routing_entropy"]
+    # Filter by epoch range
+    df = history_df[(history_df["step"] >= min_epoch) & (history_df["step"] <= max_epoch)]
+
+    entropy = df["routing_entropy"]
     if entropy.max() == 0:
         return create_empty_figure("No routing entropy data")
 
@@ -145,7 +156,7 @@ def create_routing_entropy_curve(history_df: pd.DataFrame) -> go.Figure:
 
     fig.add_trace(
         go.Scatter(
-            x=history_df["step"],
+            x=df["step"],
             y=entropy,
             mode="lines",
             name="Routing Entropy",
@@ -157,19 +168,156 @@ def create_routing_entropy_curve(history_df: pd.DataFrame) -> go.Figure:
     )
 
     # Add max entropy reference line (log(n_heads))
-    max_entropy = np.log(4)  # Assuming 4 heads; will be approximate
+    max_entropy = np.log(n_heads)
     fig.add_hline(
         y=max_entropy,
         line_dash="dot",
         line_color="gray",
-        annotation_text="Max (uniform)",
+        annotation_text=f"Max (uniform, {n_heads} heads)",
     )
 
     fig.update_layout(
-        title="Routing Entropy",
+        title="Routing Entropy Over Training",
+        xaxis_title="Step",
+        yaxis_title="Entropy",
+        yaxis_range=[0, max_entropy * 1.1],
+        hovermode="x unified",
+        height=350,
+    )
+
+    return fig
+
+
+def create_head_utilization_over_time(
+    history_df: pd.DataFrame,
+    n_heads: int = 4,
+    min_epoch: int = 0,
+    max_epoch: int = 100000,
+) -> go.Figure:
+    """
+    Create plot of per-head utilization over training.
+
+    Args:
+        history_df: DataFrame with step and head_{i}_utilization columns
+        n_heads: Number of routing heads
+        min_epoch: Start of epoch range
+        max_epoch: End of epoch range
+
+    Returns:
+        Plotly figure with one line per head
+    """
+    # Check for head utilization columns
+    head_cols = [f"head_{i}_utilization" for i in range(n_heads)]
+    available_cols = [c for c in head_cols if c in history_df.columns]
+
+    if not available_cols:
+        return create_empty_figure("No head utilization data")
+
+    # Filter by epoch range
+    df = history_df[(history_df["step"] >= min_epoch) & (history_df["step"] <= max_epoch)]
+
+    if df.empty:
+        return create_empty_figure("No data in epoch range")
+
+    fig = go.Figure()
+
+    for i, col in enumerate(available_cols):
+        y_data, valid_mask = get_valid_data(df, col)
+        if valid_mask.any():
+            fig.add_trace(
+                go.Scatter(
+                    x=df.loc[valid_mask, "step"],
+                    y=df.loc[valid_mask, col],
+                    mode="lines",
+                    name=f"Head {i}",
+                    line=dict(color=HEAD_COLORS[i % len(HEAD_COLORS)], width=2),
+                    hovertemplate=f"Head {i}<br>Step: %{{x}}<br>Utilization: %{{y:.3f}}<extra></extra>",
+                )
+            )
+
+    # Add uniform utilization reference line
+    uniform_util = 1.0 / n_heads
+    fig.add_hline(
+        y=uniform_util,
+        line_dash="dot",
+        line_color="gray",
+        annotation_text=f"Uniform ({uniform_util:.2f})",
+    )
+
+    fig.update_layout(
+        title="Head Utilization Over Training",
+        xaxis_title="Step",
+        yaxis_title="Average Weight",
+        yaxis_range=[0, 1.0],
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=350,
+    )
+
+    return fig
+
+
+def create_multi_routing_entropy_plot(
+    experiments: list["ExperimentRun"],
+    min_epoch: int = 0,
+    max_epoch: int = 100000,
+) -> go.Figure:
+    """
+    Create routing entropy comparison for multiple experiments.
+
+    Args:
+        experiments: List of ExperimentRun objects
+        min_epoch: Start of epoch range
+        max_epoch: End of epoch range
+
+    Returns:
+        Plotly figure with overlaid curves
+    """
+    if not experiments:
+        return create_empty_figure("Select experiments")
+
+    fig = go.Figure()
+    has_data = False
+
+    for i, exp in enumerate(experiments):
+        df = exp.history_df
+        if "routing_entropy" not in df.columns:
+            continue
+
+        # Filter by epoch range
+        df = df[(df["step"] >= min_epoch) & (df["step"] <= max_epoch)]
+
+        y_data, valid_mask = get_valid_data(df, "routing_entropy")
+        if valid_mask.any() and y_data.max() > 0:
+            has_data = True
+            fig.add_trace(
+                go.Scatter(
+                    x=df.loc[valid_mask, "step"],
+                    y=df.loc[valid_mask, "routing_entropy"],
+                    mode="lines",
+                    name=exp.name,
+                    line=dict(color=CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)], width=2),
+                )
+            )
+
+    if not has_data:
+        return create_empty_figure("No routing entropy data")
+
+    # Add max entropy reference (approximate)
+    fig.add_hline(
+        y=np.log(4),
+        line_dash="dot",
+        line_color="gray",
+        annotation_text="Max (4 heads)",
+    )
+
+    fig.update_layout(
+        title="Routing Entropy Comparison",
         xaxis_title="Step",
         yaxis_title="Entropy",
         hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=350,
     )
 
     return fig

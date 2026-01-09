@@ -24,6 +24,10 @@ from .plots import (
     create_key_frequency_table,
     create_ablation_comparison,
     create_fve_breakdown_plot,
+    create_multi_routing_entropy_plot,
+    create_head_utilization_over_time,
+    create_routing_heatmap,
+    create_routing_evolution_comparison,
 )
 from .helpers import create_empty_figure, filter_by_epoch_range, get_valid_data
 from .styles import CATEGORICAL_COLORS
@@ -1545,6 +1549,46 @@ def create_app() -> gr.Blocks:
                 with gr.Row():
                     fourier_fve_plot = gr.Plot(label="Fraction of Variance Explained")
 
+            # Tab 5: Routing Analysis
+            with gr.Tab("Routing Analysis"):
+                gr.Markdown(
+                    "*Analyze routing behavior in routed networks. "
+                    "Entropy measures routing decisiveness (lower = more decisive). "
+                    "Head utilization shows which heads are being used.*"
+                )
+
+                # Time series plots
+                gr.Markdown("### Routing Dynamics Over Training")
+                with gr.Row():
+                    routing_entropy_plot = gr.Plot(label="Routing Entropy")
+                    routing_head_util_plot = gr.Plot(label="Head Utilization")
+
+                # Snapshot analysis
+                gr.Markdown("### Routing Pattern Snapshots")
+                gr.Markdown(
+                    "*Requires routing snapshots saved during training (routed networks only). "
+                    "Shows dominant routing head for each (a, b) input pair.*"
+                )
+
+                with gr.Row():
+                    routing_layer_dropdown = gr.Dropdown(
+                        label="Layer",
+                        choices=["0", "1", "2", "3"],
+                        value="0",
+                        info="Layer to visualize",
+                    )
+                    routing_snapshot_btn = gr.Button("Load Snapshots", variant="secondary")
+
+                routing_snapshot_status = gr.Textbox(
+                    label="Status",
+                    interactive=False,
+                    value="Select an experiment and click Load Snapshots",
+                )
+
+                with gr.Row():
+                    routing_heatmap_plot = gr.Plot(label="Current Routing Pattern")
+                    routing_evolution_plot = gr.Plot(label="Routing Evolution")
+
         # ─── Event Handlers ───
 
         # Initialize summary table on load
@@ -1907,6 +1951,166 @@ def create_app() -> gr.Blocks:
                 fourier_key_freq_table,
                 fourier_ablation_plot,
                 fourier_fve_plot,
+            ],
+        )
+
+        # ─── Routing Analysis Event Handlers ───
+
+        def update_routing_plots(
+            exp_paths: list[str] | str | None,
+            min_epoch: int,
+            max_epoch: int,
+        ):
+            """Update routing time-series plots."""
+            empty = create_empty_figure("Select routed experiment(s)")
+
+            if not exp_paths:
+                return empty, empty
+
+            if isinstance(exp_paths, str):
+                exp_paths = [exp_paths]
+
+            # Load experiments
+            experiments = []
+            for path in exp_paths:
+                exp = get_experiment(path)
+                if exp:
+                    experiments.append(exp)
+
+            if not experiments:
+                return empty, empty
+
+            # Check if any experiment has routing data
+            has_routing = any("routing_entropy" in exp.history_df.columns for exp in experiments)
+
+            if not has_routing:
+                no_data = create_empty_figure("No routing data (transformer or MLP?)")
+                return no_data, no_data
+
+            # Create routing entropy plot (multi-experiment)
+            entropy_fig = create_multi_routing_entropy_plot(
+                experiments, min_epoch=min_epoch, max_epoch=max_epoch
+            )
+
+            # For head utilization, use first experiment (too complex for multi)
+            first_exp = experiments[0]
+            n_heads = first_exp.config.get("n_heads", 4)
+            head_util_fig = create_head_utilization_over_time(
+                first_exp.history_df,
+                n_heads=n_heads,
+                min_epoch=min_epoch,
+                max_epoch=max_epoch,
+            )
+
+            return entropy_fig, head_util_fig
+
+        def load_routing_snapshots(
+            exp_paths: list[str] | str | None,
+            layer_idx: str,
+        ):
+            """Load and visualize routing snapshots."""
+            empty = create_empty_figure("No routing snapshots")
+
+            if not exp_paths:
+                return "Select an experiment first", empty, empty
+
+            if isinstance(exp_paths, str):
+                exp_paths = [exp_paths]
+
+            exp = get_experiment(exp_paths[0])
+            if not exp:
+                return "Failed to load experiment", empty, empty
+
+            # Check model type
+            model_type = exp.config.get("model_type", "transformer")
+            if model_type != "routed":
+                return (
+                    f"Routing snapshots only available for routed networks (got {model_type})",
+                    empty,
+                    empty,
+                )
+
+            # Check for routing snapshots
+            if not exp.routing_snapshots:
+                return (
+                    "No routing snapshots found. Ensure save_routing_every is set during training.",
+                    empty,
+                    empty,
+                )
+
+            try:
+                layer = int(layer_idx)
+                p = exp.p
+                n_heads = exp.config.get("n_heads", 4)
+                snapshots = exp.routing_snapshots
+
+                # Get latest snapshot for heatmap
+                latest = snapshots[-1]
+                latest_weights = latest.get("weights", [])
+
+                if layer >= len(latest_weights):
+                    return (
+                        f"Layer {layer} not available (only {len(latest_weights)} layers)",
+                        empty,
+                        empty,
+                    )
+
+                # Create current routing heatmap
+                heatmap_fig = create_routing_heatmap(
+                    latest_weights,
+                    p=p,
+                    layer_idx=layer,
+                    n_heads=n_heads,
+                )
+
+                # Create evolution comparison
+                evolution_fig = create_routing_evolution_comparison(
+                    snapshots,
+                    p=p,
+                    layer_idx=layer,
+                    n_snapshots=4,
+                )
+
+                status = (
+                    f"Loaded {len(snapshots)} snapshots for {exp.name}\n"
+                    f"Layer {layer}, p={p}, {n_heads} heads\n"
+                    f"Latest snapshot at step {latest.get('step', 'unknown')}"
+                )
+
+                return status, heatmap_fig, evolution_fig
+
+            except Exception as e:
+                import traceback
+
+                return f"Error: {str(e)}\n{traceback.format_exc()}", empty, empty
+
+        # Update routing plots when experiment or epoch range changes
+        exp_dropdown.change(
+            fn=update_routing_plots,
+            inputs=[exp_dropdown, min_epoch_slider, max_epoch_slider],
+            outputs=[routing_entropy_plot, routing_head_util_plot],
+        )
+
+        min_epoch_slider.release(
+            fn=update_routing_plots,
+            inputs=[exp_dropdown, min_epoch_slider, max_epoch_slider],
+            outputs=[routing_entropy_plot, routing_head_util_plot],
+        )
+
+        max_epoch_slider.release(
+            fn=update_routing_plots,
+            inputs=[exp_dropdown, min_epoch_slider, max_epoch_slider],
+            outputs=[routing_entropy_plot, routing_head_util_plot],
+        )
+
+        # Load routing snapshots button
+        routing_snapshot_btn.click(
+            fn=load_routing_snapshots,
+            inputs=[exp_dropdown, routing_layer_dropdown],
+            outputs=[
+                routing_snapshot_status,
+                routing_heatmap_plot,
+                routing_evolution_plot,
             ],
         )
 

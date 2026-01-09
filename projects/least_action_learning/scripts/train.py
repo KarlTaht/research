@@ -22,15 +22,17 @@ def parse_args():
 
     # Data arguments
     parser.add_argument("--p", type=int, default=113, help="Prime modulus")
-    parser.add_argument("--operation", type=str, default="add", choices=["add", "multiply"])
+    parser.add_argument("--operation", type=str, default="add", choices=["add", "multiply", "both"])
     parser.add_argument("--train-frac", type=float, default=0.3)
 
     # Model arguments
     parser.add_argument("--model-type", type=str, default="routed",
-                        choices=["baseline", "routed", "single_head", "transformer"])
+                        choices=["baseline", "routed", "single_head", "transformer", "routed_transformer"])
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--n-layers", type=int, default=4)
     parser.add_argument("--n-heads", type=int, default=4)
+    parser.add_argument("--n-ffn-heads", type=int, default=None,
+                        help="Number of parallel FFN heads for routed_transformer (default: same as n_heads)")
 
     # Training arguments
     parser.add_argument("--epochs", type=int, default=50000)
@@ -90,6 +92,7 @@ def main():
         "hidden_dim": args.hidden_dim,
         "n_layers": args.n_layers,
         "n_heads": args.n_heads,
+        "n_ffn_heads": args.n_ffn_heads,
         "epochs": args.epochs,
         "lr": args.lr,
         "weight_decay": args.weight_decay,

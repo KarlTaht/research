@@ -1,0 +1,71 @@
+# Routed Network Validation Sweep
+# Phase 1: Compare transformer baseline vs routed networks
+# Goal: Confirm routed network can grok with known-good hyperparameters
+#
+# Based on best transformer params: p=113, lr=3e-4, wd=0.5, 30/70 split
+# Parameter-matched: Routed(2L, 74h, 4H) = 429k params ≈ Transformer(2L, 128h, 4H) = 440k params
+
+base:
+  # Data
+  p: 113
+  operation: "add"
+  train_frac: 0.3  # 30/70 split
+  data_seed: 42
+
+  # Model defaults - MATCHED PARAMS between architectures
+  # Transformer: 2L, 128h, 4H = 440k params
+  # Routed: 2L, 74h, 4H = 429k params (0.98x)
+  hidden_dim: 74  # For routed; transformer overrides to 128
+  n_layers: 2     # Same for both
+  n_heads: 4      # Same for both
+
+  # Training - use known good hyperparameters
+  epochs: 50000  # Reduced from 100k - transformer groks at ~3,400
+  lr: 0.0003       # 3e-4
+  weight_decay: 0.5
+  optimizer: "adamw"
+  beta1: 0.9
+  beta2: 0.98
+  eps: 1.0e-8
+  grad_clip: 1.0
+  warmup_epochs: 500
+
+  # Logging
+  log_every: 100
+  save_routing_every: 1000
+  checkpoint_every: 10000
+
+  seed: 42
+
+experiments:
+  # ═══════════════════════════════════════════════════════════════
+  # Transformer baseline (gold standard) - 440k params
+  # ═══════════════════════════════════════════════════════════════
+  - name: "transformer_reference_p113"
+    model_type: "transformer"
+    hidden_dim: 128  # Override: transformer uses 128
+    routing_regularizer: null
+    lambda_routing: 0.0
+    lambda_spectral: 0.0
+
+  # ═══════════════════════════════════════════════════════════════
+  # Routed network WITHOUT regularization - 429k params
+  # Tests: Does routing structure alone affect grokking?
+  # ═══════════════════════════════════════════════════════════════
+  - name: "routed_no_reg_p113"
+    model_type: "routed"
+    # Uses base hidden_dim=74 for parameter matching
+    routing_regularizer: null
+    lambda_routing: 0.0
+    lambda_spectral: 0.0
+
+  # ═══════════════════════════════════════════════════════════════
+  # Routed network WITH entropy regularization - 429k params
+  # Tests: Does encouraging decisive routing accelerate grokking?
+  # ═══════════════════════════════════════════════════════════════
+  - name: "routed_entropy_p113"
+    model_type: "routed"
+    # Uses base hidden_dim=74 for parameter matching
+    routing_regularizer: "entropy"
+    lambda_routing: 0.01
+    lambda_spectral: 0.0

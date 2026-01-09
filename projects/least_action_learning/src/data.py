@@ -346,6 +346,158 @@ class SequenceArithmeticDataset(Dataset):
         return self.all_input_ids[idx], self.all_targets[idx]
 
 
+class MultiOpSequenceDataset(Dataset):
+    """
+    Multi-operation sequence dataset for transformer grokking experiments.
+
+    Combines both addition and multiplication operations in a single dataset.
+    This tests whether routing can specialize heads per operation.
+
+    Produces sequences in the format [a, op, b, =] where:
+    - a, b are residue tokens (0 to p-1)
+    - op is either add_token (p) or mul_token (p+1)
+    - = is the equals token (p+2)
+
+    The target is the result token (0 to p-1).
+
+    Args:
+        p: Prime modulus
+        train_frac: Fraction of data to use for training (applied per operation)
+        seed: Random seed for reproducible splits
+    """
+
+    def __init__(
+        self,
+        p: int,
+        train_frac: float = 0.3,
+        seed: int = 42,
+    ):
+        self.p = p
+        self.train_frac = train_frac
+        self.seed = seed
+
+        # Token vocabulary
+        self.add_token = p      # addition operation token
+        self.mul_token = p + 1  # multiplication operation token
+        self.eq_token = p + 2   # equals token
+        self.vocab_size = p + 3  # p residues + add + mul + equals
+
+        # Generate data
+        self._generate_data()
+        self._create_split()
+
+    def _generate_data(self):
+        """Generate all (a, b) pairs for both operations."""
+        # Create all pairs
+        a_vals = torch.arange(self.p)
+        b_vals = torch.arange(self.p)
+        aa, bb = torch.meshgrid(a_vals, b_vals, indexing='ij')
+
+        pairs = torch.stack([aa.flatten(), bb.flatten()], dim=1)  # [p², 2]
+        n_pairs = pairs.shape[0]
+
+        a = pairs[:, 0]
+        b = pairs[:, 1]
+
+        # Addition data
+        add_targets = ((a + b) % self.p).long()
+        add_input_ids = torch.stack([
+            a.long(),
+            torch.full((n_pairs,), self.add_token, dtype=torch.long),
+            b.long(),
+            torch.full((n_pairs,), self.eq_token, dtype=torch.long),
+        ], dim=1)
+        add_ops = torch.zeros(n_pairs, dtype=torch.long)  # 0 = add
+
+        # Multiplication data
+        mul_targets = ((a * b) % self.p).long()
+        mul_input_ids = torch.stack([
+            a.long(),
+            torch.full((n_pairs,), self.mul_token, dtype=torch.long),
+            b.long(),
+            torch.full((n_pairs,), self.eq_token, dtype=torch.long),
+        ], dim=1)
+        mul_ops = torch.ones(n_pairs, dtype=torch.long)  # 1 = mul
+
+        # Combine both operations
+        self.all_pairs = torch.cat([pairs, pairs], dim=0)  # [2p², 2]
+        self.all_targets = torch.cat([add_targets, mul_targets], dim=0)
+        self.all_input_ids = torch.cat([add_input_ids, mul_input_ids], dim=0)
+        self.all_ops = torch.cat([add_ops, mul_ops], dim=0)  # Track which operation
+
+    def _create_split(self):
+        """Create train/test split (stratified by operation)."""
+        generator = torch.Generator().manual_seed(self.seed)
+        n_per_op = self.p * self.p
+        n_train_per_op = int(n_per_op * self.train_frac)
+
+        # Split each operation separately for balanced train/test
+        perm_add = torch.randperm(n_per_op, generator=generator)
+        perm_mul = torch.randperm(n_per_op, generator=generator) + n_per_op
+
+        train_idx = torch.cat([perm_add[:n_train_per_op], perm_mul[:n_train_per_op]])
+        test_idx = torch.cat([perm_add[n_train_per_op:], perm_mul[n_train_per_op:]])
+
+        # Shuffle combined indices
+        train_perm = torch.randperm(len(train_idx), generator=generator)
+        test_perm = torch.randperm(len(test_idx), generator=generator)
+        train_idx = train_idx[train_perm]
+        test_idx = test_idx[test_perm]
+
+        self.train_split = SequenceDatasetSplit(
+            input_ids=self.all_input_ids[train_idx],
+            targets=self.all_targets[train_idx],
+            pairs=self.all_pairs[train_idx],
+        )
+        self.train_ops = self.all_ops[train_idx]
+
+        self.test_split = SequenceDatasetSplit(
+            input_ids=self.all_input_ids[test_idx],
+            targets=self.all_targets[test_idx],
+            pairs=self.all_pairs[test_idx],
+        )
+        self.test_ops = self.all_ops[test_idx]
+
+    def get_train(self) -> SequenceDatasetSplit:
+        """Get training data split."""
+        return self.train_split
+
+    def get_test(self) -> SequenceDatasetSplit:
+        """Get test data split."""
+        return self.test_split
+
+    def get_all(self) -> SequenceDatasetSplit:
+        """Get all data."""
+        return SequenceDatasetSplit(
+            input_ids=self.all_input_ids,
+            targets=self.all_targets,
+            pairs=self.all_pairs,
+        )
+
+    @property
+    def input_dim(self) -> int:
+        """Returns vocab size."""
+        return self.vocab_size
+
+    @property
+    def output_dim(self) -> int:
+        """Output dimension (p classes)."""
+        return self.p
+
+    @property
+    def seq_len(self) -> int:
+        """Sequence length (4 tokens: a, op, b, =)."""
+        return 4
+
+    def __len__(self) -> int:
+        """Total number of examples (2 * p²)."""
+        return 2 * self.p * self.p
+
+    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor]:
+        """Get a single example."""
+        return self.all_input_ids[idx], self.all_targets[idx]
+
+
 def get_special_pairs(p: int) -> dict[str, list[tuple[int, int]]]:
     """
     Get lists of special (a, b) pairs for analysis.

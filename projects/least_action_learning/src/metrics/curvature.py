@@ -563,8 +563,13 @@ def compute_weight_hessian_trace(
         loss = loss_fn(logits, targets)
 
         # Get gradients with computation graph retained
+        # allow_unused=True handles routed networks where some heads may not be used
         params = [p for p in model.parameters() if p.requires_grad]
-        grads = torch.autograd.grad(loss, params, create_graph=True, retain_graph=True)
+        grads = torch.autograd.grad(
+            loss, params, create_graph=True, retain_graph=True, allow_unused=True
+        )
+        # Replace None gradients (unused params) with zeros
+        grads = [g if g is not None else torch.zeros_like(p) for g, p in zip(grads, params)]
 
         # Random vector for Hutchinson (same shape as concatenated gradients)
         v = [torch.randn_like(g) for g in grads]
@@ -574,7 +579,9 @@ def compute_weight_hessian_trace(
         grad_v = sum((g * vi).sum() for g, vi in zip(grads, v))
 
         # Second: differentiate again to get Hv
-        hvp = torch.autograd.grad(grad_v, params, retain_graph=True)
+        hvp = torch.autograd.grad(grad_v, params, retain_graph=True, allow_unused=True)
+        # Replace None with zeros
+        hvp = [h if h is not None else torch.zeros_like(p) for h, p in zip(hvp, params)]
 
         # v^T H v = sum(v * Hv)
         trace_estimate = sum((vi * hvi).sum().item() for vi, hvi in zip(v, hvp))

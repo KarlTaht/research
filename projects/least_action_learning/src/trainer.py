@@ -9,7 +9,7 @@ from typing import Optional, Callable
 from pathlib import Path
 import json
 
-from .data import ModularArithmeticDataset, SequenceArithmeticDataset
+from .data import ModularArithmeticDataset, SequenceArithmeticDataset, MultiOpSequenceDataset
 from .models import BaselineMLP, RoutedNetwork, GrokTransformer, create_model
 from .losses import LeastActionLoss
 from .metrics import (
@@ -48,6 +48,7 @@ class TrainerConfig:
     hidden_dim: int = 128
     n_layers: int = 4
     n_heads: int = 4
+    n_ffn_heads: Optional[int] = None  # FFN heads for routed_transformer (default: same as n_heads)
     tie_embeddings: bool = False  # Tie output projection to input embedding (transformer only)
 
     # Training
@@ -459,16 +460,24 @@ class Trainer:
         self.device = self._get_device()
 
         # Track if using transformer (sequence-based input)
-        self.is_transformer = config.model_type == "transformer"
+        self.is_transformer = config.model_type in ("transformer", "routed_transformer")
 
         # Create dataset (sequence-based for transformer, one-hot for others)
         if self.is_transformer:
-            self.dataset = SequenceArithmeticDataset(
-                p=config.p,
-                operation=config.operation,
-                train_frac=config.train_frac,
-                seed=config.data_seed,
-            )
+            if config.operation == "both":
+                # Multi-operation dataset: both add and multiply
+                self.dataset = MultiOpSequenceDataset(
+                    p=config.p,
+                    train_frac=config.train_frac,
+                    seed=config.data_seed,
+                )
+            else:
+                self.dataset = SequenceArithmeticDataset(
+                    p=config.p,
+                    operation=config.operation,
+                    train_frac=config.train_frac,
+                    seed=config.data_seed,
+                )
         else:
             self.dataset = ModularArithmeticDataset(
                 p=config.p,
@@ -485,6 +494,7 @@ class Trainer:
             output_dim=self.dataset.output_dim,
             n_layers=config.n_layers,
             n_heads=config.n_heads,
+            n_ffn_heads=config.n_ffn_heads,
             tie_embeddings=config.tie_embeddings,
         ).to(self.device)
 
@@ -556,12 +566,15 @@ class Trainer:
             for name, param in self.model.named_parameters():
                 if not param.requires_grad:
                     continue
-                # No weight decay for: biases, LayerNorm, embeddings
+                # No weight decay for: biases, LayerNorm, embeddings, routing gates
                 if (
                     'bias' in name
                     or 'ln' in name.lower()
                     or 'layernorm' in name.lower()
                     or 'embedding' in name
+                    or 'gate' in name  # Routing gate weights
+                    or 'state_proj' in name  # Routing state projection
+                    or 'input_proj' in name  # Routing input projection
                 ):
                     no_decay_params.append(param)
                 else:

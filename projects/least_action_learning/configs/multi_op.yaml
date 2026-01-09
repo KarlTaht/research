@@ -1,0 +1,47 @@
+# Multi-operation grokking experiments
+# Tests whether routing can specialize heads per operation (add vs multiply)
+
+base:
+  # Data - both operations
+  p: 113
+  operation: "both"  # Uses MultiOpSequenceDataset
+  train_frac: 0.3
+  data_seed: 42
+
+  # Model
+  hidden_dim: 128
+  n_layers: 4
+  n_heads: 4
+  tie_embeddings: false
+
+  # Training - known good settings from single-op experiments
+  epochs: 30000
+  lr: 3.0e-4
+  weight_decay: 1.0
+  optimizer: "adamw"
+  beta1: 0.9
+  beta2: 0.98
+  eps: 1.0e-8
+  grad_clip: 1.0
+  warmup_epochs: 500
+
+  # Logging
+  log_every: 100
+  save_routing_every: 1000
+  checkpoint_every: 5000
+
+  # Metrics
+  compute_weight_curvature: true
+  weight_curvature_interval: 100
+  compute_optimizer_metrics: true
+
+experiments:
+  # Standard transformer baseline
+  - name: "multi_op_transformer"
+    model_type: "transformer"
+
+  # Routed transformer with entropy regularization (known to work)
+  - name: "multi_op_routed_entropy"
+    model_type: "routed_transformer"
+    routing_regularizer: "entropy"
+    lambda_routing: 0.10
