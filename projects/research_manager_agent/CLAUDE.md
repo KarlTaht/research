@@ -33,7 +33,7 @@ pytest tests/
 
 ## Current Status
 
-**Phase 1: Foundation - COMPLETE**
+**Phase 2: Codebase Tools - COMPLETE**
 
 ---
 
@@ -55,21 +55,29 @@ Core infrastructure for the agent.
 | Audit logging | Done | `src/research_manager/safety/audit.py` |
 | Terminal UI | Done | `src/research_manager/ui/terminal.py` |
 | Basic REPL | Done | `src/research_manager/main.py` |
-| Unit tests | Done | `tests/unit/` (65 tests passing) |
+| Unit tests | Done | `tests/unit/` (65 tests) |
 
-### Phase 2: Codebase Tools (NOT STARTED)
+### Phase 2: Codebase Tools (COMPLETE)
 
 Tools for understanding the repository structure.
 
 | Tool | Status | Purpose |
 |------|--------|---------|
-| `explore_repo` | Pending | Navigate directory structure |
-| `list_projects` | Pending | List all projects with status |
-| `find_script` | Pending | Find scripts by task description |
-| `read_config` | Pending | Parse and explain YAML configs |
-| `compare_configs` | Pending | Diff two config files |
+| `explore_repo` | Done | Navigate directory structure |
+| `list_projects` | Done | List all projects with status |
+| `get_project` | Done | Get details about specific project |
+| `find_script` | Done | Find scripts by task description |
+| `list_scripts` | Done | List all scripts |
+| `read_config` | Done | Parse and explain YAML configs |
+| `compare_configs` | Done | Diff two config files |
+| `list_configs` | Done | List all configs |
 
-**Skill:** `codebase-navigation` - Claude Agent Skill for repo navigation
+**Skills created:**
+- `codebase-navigation` - Repo navigation with CONVENTIONS.md
+- `experiment-analysis` - Experiment queries with SQL_PATTERNS.md
+- `training-assistant` - Training help with ERROR_PATTERNS.md
+
+**Tests:** 114 unit tests passing
 
 ### Phase 3: Experiment Tools (NOT STARTED)
 

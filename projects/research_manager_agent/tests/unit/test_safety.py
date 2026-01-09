@@ -1,6 +1,5 @@
 """Tests for safety hooks and audit logging."""
 
-
 from research_manager.safety import SafetyHooks, SafetyDecision, AuditLog, AuditEntry
 
 
