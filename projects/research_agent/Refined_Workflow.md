@@ -35,9 +35,7 @@ The workflow produces three classes of documentation:
 
 Note: Phase 5 is iterative, and the hypothesis, scientific design, and engineering design may all need to be incrementally refined. When we've deviated significantly from our origination point - we can explicit move on (commit). This is defined in section 6. 
 
-
-
-
+## TODO: Phase 1-4, 6 definition
 
 ## Phase 5: Experimental Iteration
 
@@ -89,37 +87,165 @@ Merge requires explicit human intervention. AI may propose merge candidates and 
 The experiment graph is stored as a JSON file in the project repository, enabling programmatic traversal, visualization, and audit.
 
 #### Schema
-```json
-{
-  "hypothesis_id": "string",
-  "hypothesis_statement": "string",
-  "created_at": "ISO-8601 timestamp",
-  "updated_at": "ISO-8601 timestamp",
-  "nodes": {
-    "<node_id>": {
-      "id": "string (unique identifier)",
-      "parent_ids": ["string (empty for root, multiple for merge)"],
-      "edge_rationale": "string (why this experiment was spawned)",
-      "experiment_group": "string (reference to experiment config)",
-      "status": "planned | running | completed | pruned | committed",
-      "sub_report_path": "string (path to sub-report, null if not completed)",
-      "findings_summary": "string (one-line distillation)",
-      "created_at": "ISO-8601 timestamp",
-      "completed_at": "ISO-8601 timestamp or null"
-    }
-  },
-  "current_position": "string (node_id)",
-  "active_frontier": ["string (node_ids with status=planned)"],
-  "metadata": {
-    "total_nodes": "integer",
-    "max_depth": "integer",
-    "committed_count": "integer",
-    "pruned_count": "integer"
-  }
-}
+
+**Top-Level Fields**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `hypothesis_id` | string | Unique identifier for the hypothesis |
+| `hypothesis_statement` | string | The testable claim being investigated |
+| `created_at` | ISO-8601 | When the hypothesis was created |
+| `updated_at` | ISO-8601 | Last modification timestamp |
+| `nodes` | object | Map of node_id → Node (see below) |
+| `current_position` | string | Node ID of current reasoning position |
+| `active_frontier` | string[] | Node IDs with status=planned |
+| `metadata` | object | Aggregate statistics (see below) |
+
+**Node Fields** (each entry in `nodes`)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier |
+| `parent_ids` | string[] | Empty for root, multiple for merge |
+| `edge_rationale` | string | Why this experiment was spawned |
+| `experiment_group` | string | Reference to experiment config |
+| `status` | enum | `planned` \| `running` \| `completed` \| `pruned` \| `committed` |
+| `sub_report_path` | string? | Path to sub-report (null if not completed) |
+| `findings_summary` | string? | One-line distillation of results |
+| `created_at` | ISO-8601 | When the node was created |
+| `completed_at` | ISO-8601? | When completed (null if pending) |
+
+**Metadata Fields**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_nodes` | integer | Total nodes in the graph |
+| `max_depth` | integer | Longest path from root |
+| `committed_count` | integer | Nodes with status=committed |
+| `pruned_count` | integer | Nodes with status=pruned |
+
+
+
+### Visualization
+
+The experiment graph can be rendered as a Mermaid diagram for quick visual inspection. The diagram is auto-generated from the JSON representation.
+
+#### Rendering Rules
+
+| Node Status | Shape | Style |
+|-------------|-------|-------|
+| completed | Rectangle | Default |
+| planned | Rectangle | Dashed border |
+| running | Rectangle | Bold border |
+| pruned | Rectangle | Strikethrough, grayed |
+| committed | Rectangle | Double border, highlighted |
+
+#### Full Experiment Graph Example
+
+```mermaid
+graph TD
+    subgraph Legend[Node Status Legend]
+        direction LR
+        L1[Completed]:::completed
+        L2[Planned]:::planned
+        L3[Pruned]:::pruned
+        L4[Committed]:::committed
+    end
+
+    root[H001: Root<br/>Alternate routing arch<br/>achieves faster grokking]
+
+    %% Branch A: Baseline characterization
+    expA1[A.1: Baseline<br/>Groks at ~50k steps]
+    expA2[A.2: Alt arch v1<br/>No grokking at 50k]
+    expA3[A.3: Extended run<br/>Groks at ~95k steps<br/>1.9x slower]:::committed
+
+    %% Branch B: Architecture variants
+    expB1[B.1: Alt arch v2<br/>Deeper network]
+    expB2[B.2: Extended run<br/>Still no grokking at 100k]:::pruned
+
+    %% Branch C: Hyperparameter exploration
+    expC1[C.1: LR sweep<br/>on alt arch v1]:::planned
+    expC2[C.2: Batch size<br/>exploration]:::planned
+
+    %% Merge node
+    expM1[M.1: Validation<br/>Compare v1 vs baseline<br/>across scales]:::planned
+
+    root --> expA1
+    expA1 --> expA2
+    expA2 -->|Expand: 2x runtime| expA3
+
+    root --> expB1
+    expB1 -->|Expand: 2x runtime| expB2
+
+    expA3 -->|Investigate: LR sensitivity| expC1
+    expA3 -->|Investigate: batch effects| expC2
+
+    expA3 -.->|Merge: validate finding| expM1
+    expB2 -.->|Merge: contrast failure| expM1
+
+    classDef completed fill:#f8fafc,stroke:#334155,stroke-width:2px
+    classDef planned fill:#fef9c3,stroke:#ca8a04,stroke-width:2px,stroke-dasharray:5
+    classDef pruned fill:#fee2e2,stroke:#dc2626,stroke-width:2px
+    classDef committed fill:#dcfce7,stroke:#16a34a,stroke-width:4px
+
+    linkStyle 7 stroke:#9333ea,stroke-width:2px
+    linkStyle 8 stroke:#9333ea,stroke-width:2px
 ```
 
-#### Example
+
+### The Iteration Cycle
+
+Each cycle through Phase 5 performs one or more graph operations:
+
+| Step | Activity | Graph Operations | Output |
+|------|----------|------------------|--------|
+| **5.1 Execute** | Run experiment group | Execute (edge traversal → node creation) | Raw results, logs, model snapshots |
+| **5.2 Distill** | Generate sub-report, extract metrics | Update node with findings_summary, sub_report_path | Sub-report (immutable), node updated |
+| **5.3 Reflect** | Interpret findings, assess hypothesis, attempt core claim | None (reasoning step) | Reflection notes in Working Report |
+| **5.4 Decide Trajectory** | Choose next graph operation(s) | Spawn, Prune, Backtrack, Merge, or Commit | Updated graph, rationale documented |
+
+### Reflection Prompts
+
+At each Reflect step (5.3), answer the following and append to the Working Report:
+
+1. **What did this experiment show?** (One sentence)
+2. **Does this change our understanding of the hypothesis?** (Yes/No + explanation)
+3. **Can I state the core claim now?** (Attempt a one-sentence claim, or explain what's missing)
+4. **What is the strongest counterargument to the current findings?** (Steel-man the opposition)
+5. **What would change my mind?** (Define falsification criteria for next cycle)
+
+When answers to prompts 3-5 remain stable across two consecutive cycles, consider a Commit decision.
+
+### Handling Negative Results
+
+A negative result ("it doesn't work") requires verification before Prune:
+
+1. **Expand**: Relax constraints—extend runtime by ~2x or within an order of magnitude
+2. **Sensitivity**: Sweep hyperparameters across defined exploration dimensions
+3. **Verify**: Confirm implementation correctness (may require Backtrack to Engineering Design)
+
+A Prune is accepted when:
+- Expansion has been attempted
+- The *reason* for failure is understood and documented
+- The finding prevents others from repeating the dead end
+
+**Pruned nodes are valid research outcomes.** They constrain the space of possibilities and may become part of the Final Report's contribution.
+
+### AI Role in Phase 5
+
+| Operation | AI Capability | Human Role |
+|-----------|---------------|------------|
+| **Spawn** | Propose candidate edges with rationale; estimate resource cost | Select which edges to add; approve rationale |
+| **Execute** | Fully autonomous: run experiment, create node, generate sub-report | Monitor; intervene on failure |
+| **Prune** | Recommend prune when expansion heuristics exhausted | Approve; ensure "why it failed" is documented |
+| **Backtrack** | Detect when current branch is stuck; suggest backtrack targets | Decide whether to backtrack or persist |
+| **Merge** | Identify merge candidates; propose validation experiment design | Approve synthesis framing; design validation |
+| **Commit** | Detect claim stability; prompt for commitment | Make the call; own the narrative |
+| **Visualize** | Generate Mermaid diagram from JSON; highlight anomalies (frontier size, depth) | Review; use for communication |
+
+## Appendix
+
+#### Example Hypothesis
 ```json
 {
   "hypothesis_id": "H001",
@@ -193,135 +319,3 @@ The experiment graph is stored as a JSON file in the project repository, enablin
   }
 }
 ```
-
-### Visualization
-
-The experiment graph can be rendered as a Mermaid diagram for quick visual inspection. The diagram is auto-generated from the JSON representation.
-
-%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#f8fafc', 'primaryTextColor': '#1e293b', 'primaryBorderColor': '#334155', 'lineColor': '#64748b'}}}%%
-
-graph TD
-    subgraph Legend[Node Status Legend]
-        direction LR
-        L1[Completed]:::default
-        L2[Planned]:::planned
-        L3[Pruned]:::pruned
-        L4[Committed]:::committed
-    end
-
-    root[H001: Root<br/>Alternate routing arch<br/>achieves faster grokking]
-
-    %% Branch A: Baseline characterization
-    expA1[A.1: Baseline<br/>Groks at ~50k steps]
-    expA2[A.2: Alt arch v1<br/>No grokking at 50k]
-    expA3[A.3: Extended run<br/>Groks at ~95k steps<br/>1.9x slower]:::committed
-
-    %% Branch B: Architecture variants
-    expB1[B.1: Alt arch v2<br/>Deeper network]
-    expB2[B.2: Extended run<br/>Still no grokking at 100k]:::pruned
-
-    %% Branch C: Hyperparameter exploration
-    expC1[C.1: LR sweep<br/>on alt arch v1]:::planned
-    expC2[C.2: Batch size<br/>exploration]:::planned
-
-    %% Merge node
-    expM1[M.1: Validation<br/>Compare v1 vs baseline<br/>across scales]:::planned
-
-    root --> expA1
-    expA1 --> expA2
-    expA2 -->|Expand: 2x runtime| expA3
-
-    root --> expB1
-    expB1 -->|Expand: 2x runtime| expB2
-
-    expA3 -->|Investigate: LR sensitivity| expC1
-    expA3 -->|Investigate: batch effects| expC2
-
-    expA3 -.->|Merge: validate finding| expM1
-    expB2 -.->|Merge: contrast failure| expM1
-
-    classDef default fill:#f8fafc,stroke:#334155,stroke-width:2px,color:#1e293b
-    classDef planned fill:#fef9c3,stroke:#ca8a04,stroke-width:2px,stroke-dasharray:5 5,color:#713f12
-    classDef pruned fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#991b1b
-    classDef committed fill:#dcfce7,stroke:#16a34a,stroke-width:4px,color:#14532d
-
-    linkStyle 8,9 stroke:#9333ea,stroke-width:2px,stroke-dasharray:3 3
-
-#### Rendering Rules
-
-| Node Status | Shape | Style |
-|-------------|-------|-------|
-| completed | Rectangle | Default |
-| planned | Rectangle | Dashed border |
-| running | Rectangle | Bold border |
-| pruned | Rectangle | Strikethrough, grayed |
-| committed | Rectangle | Double border, highlighted |
-
-#### Example Mermaid Output
-```mermaid
-graph TD
-    root["root<br/><i>Hypothesis established</i>"]
-    exp-001["exp-001<br/><i>Baseline groks at ~50k steps</i>"]
-    exp-002["exp-002<br/><i>No grokking at 50k steps</i>"]
-    exp-003["exp-003<br/><i>Groks at ~95k steps (1.9x slower)</i>"]
-    exp-004["exp-004<br/><i>LR sweep</i>"]:::planned
-
-    root --> exp-001
-    exp-001 --> exp-002
-    exp-002 -->|"Expand: 2x runtime"| exp-003
-    exp-003 -->|"Investigate: LR sensitivity"| exp-004
-
-    classDef planned stroke-dasharray: 5 5
-    classDef pruned opacity: 0.4, text-decoration: line-through
-    classDef committed stroke-width: 4px, stroke: #22c55e
-```
-
-### The Iteration Cycle
-
-Each cycle through Phase 5 performs one or more graph operations:
-
-| Step | Activity | Graph Operations | Output |
-|------|----------|------------------|--------|
-| **5.1 Execute** | Run experiment group | Execute (edge traversal → node creation) | Raw results, logs, model snapshots |
-| **5.2 Distill** | Generate sub-report, extract metrics | Update node with findings_summary, sub_report_path | Sub-report (immutable), node updated |
-| **5.3 Reflect** | Interpret findings, assess hypothesis, attempt core claim | None (reasoning step) | Reflection notes in Working Report |
-| **5.4 Decide Trajectory** | Choose next graph operation(s) | Spawn, Prune, Backtrack, Merge, or Commit | Updated graph, rationale documented |
-
-### Reflection Prompts
-
-At each Reflect step (5.3), answer the following and append to the Working Report:
-
-1. **What did this experiment show?** (One sentence)
-2. **Does this change our understanding of the hypothesis?** (Yes/No + explanation)
-3. **Can I state the core claim now?** (Attempt a one-sentence claim, or explain what's missing)
-4. **What is the strongest counterargument to the current findings?** (Steel-man the opposition)
-5. **What would change my mind?** (Define falsification criteria for next cycle)
-
-When answers to prompts 3-5 remain stable across two consecutive cycles, consider a Commit decision.
-
-### Handling Negative Results
-
-A negative result ("it doesn't work") requires verification before Prune:
-
-1. **Expand**: Relax constraints—extend runtime by ~2x or within an order of magnitude
-2. **Sensitivity**: Sweep hyperparameters across defined exploration dimensions
-3. **Verify**: Confirm implementation correctness (may require Backtrack to Engineering Design)
-
-A Prune is accepted when:
-- Expansion has been attempted
-- The *reason* for failure is understood and documented
-- The finding prevents others from repeating the dead end
-
-**Pruned nodes are valid research outcomes.** They constrain the space of possibilities and may become part of the Final Report's contribution.
-
-### AI Role in Phase 5
-
-| Operation | AI Capability | Human Role |
-|-----------|---------------|------------|
-| **Spawn** | Propose candidate edges with rationale; estimate resource cost | Select which edges to add; approve rationale |
-| **Execute** | Fully autonomous: run experiment, create node, generate sub-report | Monitor; intervene on failure |
-| **Prune** | Recommend prune when expansion heuristics exhausted | Approve; ensure "why it failed" is documented |
-| **Backtrack** | Detect when current branch is stuck; suggest backtrack targets | Decide whether to backtrack or persist |
-| **Merge** | Identify merge candidates; propose validation experiment design | Approve synthesis framing; design validation |
-| **Commit** | Detect claim stability; prompt for commitment | Make the call; own the narrative |
-| **Visualize** | Generate Mermaid diagram from JSON; highlight anomalies (frontier size, depth) | Review; use for communication |
