@@ -47,7 +47,7 @@ A monorepo for machine learning research and original research projects.
 | **embedded_attention** | Chunk-based conversational memory system using RAG with DuckDB vector storage |
 | **continual_learning** | Experiments to build intuition for catastrophic forgetting in transformers |
 | **research_agent** | Research assistant that reads papers, maintains hypotheses, and synthesizes findings |
-| **research_manager_agent** | Agent for navigating and managing this ML research monorepo |
+| **research_repository_agent** | Agent for navigating and managing this ML research monorepo |
 
 ## Setup
 
