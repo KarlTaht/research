@@ -455,6 +455,125 @@ footer {
   color: var(--red);
 }
 
+/* Priority sliders */
+.sliders-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 24px;
+}
+
+@media (max-width: 700px) {
+  .sliders-grid { grid-template-columns: 1fr; }
+}
+
+.slider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.slider-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.slider-label-row label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.slider-label-row .slider-mult {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.slider-label-row .slider-impact {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.slider-track {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.slider-track input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface2);
+  outline: none;
+  cursor: pointer;
+}
+
+.slider-track input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--accent-dim);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.slider-track input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.slider-track input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--accent-dim);
+  cursor: pointer;
+}
+
+.slider-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: -2px;
+}
+
+.slider-group[data-color="blue"] .slider-mult { background: #1a2a3a; color: #6cb8ff; }
+.slider-group[data-color="green"] .slider-mult { background: #1a3028; color: #5cc89a; }
+.slider-group[data-color="purple"] .slider-mult { background: #2a2040; color: #b08cff; }
+.slider-group[data-color="orange"] .slider-mult { background: #2a2518; color: #e0a050; }
+.slider-group[data-color="red"] .slider-mult { background: #2a1a1a; color: #e07070; }
+.slider-group[data-color="yellow"] .slider-mult { background: #2a2a1a; color: #d4c455; }
+
+.slider-group[data-color="blue"] input[type="range"]::-webkit-slider-thumb { background: #6cb8ff; box-shadow: 0 0 0 1px #3a6899; }
+.slider-group[data-color="green"] input[type="range"]::-webkit-slider-thumb { background: #5cc89a; box-shadow: 0 0 0 1px #3a7a5a; }
+.slider-group[data-color="purple"] input[type="range"]::-webkit-slider-thumb { background: #b08cff; box-shadow: 0 0 0 1px #6a5099; }
+.slider-group[data-color="orange"] input[type="range"]::-webkit-slider-thumb { background: #e0a050; box-shadow: 0 0 0 1px #996830; }
+.slider-group[data-color="red"] input[type="range"]::-webkit-slider-thumb { background: #e07070; box-shadow: 0 0 0 1px #994040; }
+.slider-group[data-color="yellow"] input[type="range"]::-webkit-slider-thumb { background: #d4c455; box-shadow: 0 0 0 1px #998a30; }
+
+.slider-group[data-color="blue"] input[type="range"]::-moz-range-thumb { background: #6cb8ff; box-shadow: 0 0 0 1px #3a6899; }
+.slider-group[data-color="green"] input[type="range"]::-moz-range-thumb { background: #5cc89a; box-shadow: 0 0 0 1px #3a7a5a; }
+.slider-group[data-color="purple"] input[type="range"]::-moz-range-thumb { background: #b08cff; box-shadow: 0 0 0 1px #6a5099; }
+.slider-group[data-color="orange"] input[type="range"]::-moz-range-thumb { background: #e0a050; box-shadow: 0 0 0 1px #996830; }
+.slider-group[data-color="red"] input[type="range"]::-moz-range-thumb { background: #e07070; box-shadow: 0 0 0 1px #994040; }
+.slider-group[data-color="yellow"] input[type="range"]::-moz-range-thumb { background: #d4c455; box-shadow: 0 0 0 1px #998a30; }
+
 /* Preset buttons */
 .presets {
   display: flex;
@@ -504,6 +623,78 @@ footer {
       <button class="preset-btn" onclick="applyPreset('staff')">Staff/Principal ($500K)</button>
       <button class="preset-btn" onclick="applyPreset('director')">Director ($750K)</button>
       <button class="preset-btn" onclick="applyPreset('exec')">Executive ($1.2M)</button>
+    </div>
+  </div>
+
+  <!-- Lifestyle Priority Sliders -->
+  <div class="card full-width" style="margin-bottom: 24px;">
+    <h2><span class="icon">&#9878;</span> Lifestyle Priorities <span style="font-weight: 400; font-size: 12px; color: var(--text-muted); margin-left: 8px;">Drag sliders to scale spending categories</span></h2>
+    <div class="sliders-grid">
+      <div class="slider-group" data-color="blue" data-slider="housing">
+        <div class="slider-label-row">
+          <label>Housing &amp; Home</label>
+          <span class="slider-mult" id="mult-housing">1.0x</span>
+        </div>
+        <div class="slider-track">
+          <input type="range" min="1" max="5" step="0.1" value="3" id="slider-housing" oninput="onSlider(this)">
+        </div>
+        <div class="slider-scale"><span>Minimal</span><span id="impact-housing"></span><span>Luxury</span></div>
+      </div>
+
+      <div class="slider-group" data-color="green" data-slider="food">
+        <div class="slider-label-row">
+          <label>Food &amp; Dining</label>
+          <span class="slider-mult" id="mult-food">1.0x</span>
+        </div>
+        <div class="slider-track">
+          <input type="range" min="1" max="5" step="0.1" value="3" id="slider-food" oninput="onSlider(this)">
+        </div>
+        <div class="slider-scale"><span>Cook at home</span><span id="impact-food"></span><span>Foodie life</span></div>
+      </div>
+
+      <div class="slider-group" data-color="purple" data-slider="nightlife">
+        <div class="slider-label-row">
+          <label>Going Out &amp; Social</label>
+          <span class="slider-mult" id="mult-nightlife">1.0x</span>
+        </div>
+        <div class="slider-track">
+          <input type="range" min="1" max="5" step="0.1" value="3" id="slider-nightlife" oninput="onSlider(this)">
+        </div>
+        <div class="slider-scale"><span>Homebody</span><span id="impact-nightlife"></span><span>Scene regular</span></div>
+      </div>
+
+      <div class="slider-group" data-color="orange" data-slider="travel">
+        <div class="slider-label-row">
+          <label>Travel &amp; Experiences</label>
+          <span class="slider-mult" id="mult-travel">1.0x</span>
+        </div>
+        <div class="slider-track">
+          <input type="range" min="1" max="5" step="0.1" value="3" id="slider-travel" oninput="onSlider(this)">
+        </div>
+        <div class="slider-scale"><span>Staycation</span><span id="impact-travel"></span><span>Globetrotter</span></div>
+      </div>
+
+      <div class="slider-group" data-color="red" data-slider="health">
+        <div class="slider-label-row">
+          <label>Health &amp; Wellness</label>
+          <span class="slider-mult" id="mult-health">1.0x</span>
+        </div>
+        <div class="slider-track">
+          <input type="range" min="1" max="5" step="0.1" value="3" id="slider-health" oninput="onSlider(this)">
+        </div>
+        <div class="slider-scale"><span>Basics</span><span id="impact-health"></span><span>Full wellness</span></div>
+      </div>
+
+      <div class="slider-group" data-color="yellow" data-slider="shopping">
+        <div class="slider-label-row">
+          <label>Style &amp; Shopping</label>
+          <span class="slider-mult" id="mult-shopping">1.0x</span>
+        </div>
+        <div class="slider-track">
+          <input type="range" min="1" max="5" step="0.1" value="3" id="slider-shopping" oninput="onSlider(this)">
+        </div>
+        <div class="slider-scale"><span>Thrifty</span><span id="impact-shopping"></span><span>Designer</span></div>
+      </div>
     </div>
   </div>
 
@@ -1000,7 +1191,32 @@ function formatAndCalc(el) {
     parts[0] = parseInt(parts[0] || '0').toLocaleString();
     el.value = parts.join('.');
   }
+  // If this is a spending input, update its base value for slider scaling
+  if (el.dataset && el.dataset.freq && el.dataset.key) {
+    const k = el.dataset.freq + ':' + el.dataset.key;
+    const v = parseFloat(el.value.replace(/[^0-9.]/g, '')) || 0;
+    // Only update base if the corresponding slider is at 1.0x (center)
+    const sliderName = getSliderForItem(el.dataset.freq, el.dataset.key);
+    if (sliderName) {
+      const slider = document.getElementById('slider-' + sliderName);
+      if (slider && parseFloat(slider.value) === 3) {
+        baseSpendingValues[k] = v;
+      }
+    } else {
+      baseSpendingValues[k] = v;
+    }
+    updateSliderImpacts();
+  }
   recalculate();
+}
+
+function getSliderForItem(freq, key) {
+  for (const [name, items] of Object.entries(SLIDER_MAPPING)) {
+    for (const item of items) {
+      if (item.freq === freq && item.key === key) return name;
+    }
+  }
+  return null;
 }
 
 function calcBrackets(income, brackets) {
@@ -1262,19 +1478,122 @@ function applyPreset(name) {
   setField('hsa', p.hsa);
   setField('otherDeductions', p.otherDeductions);
 
-  // Set spending
+  // Set spending and capture base values
+  baseSpendingValues = {};
   for (const [freq, items] of Object.entries(p.spending)) {
     for (const [key, val] of Object.entries(items)) {
       const inp = document.querySelector(`input[data-freq="${freq}"][data-key="${key}"]`);
       if (inp) inp.value = val.toLocaleString();
+      baseSpendingValues[freq + ':' + key] = val;
     }
   }
 
+  // Reset sliders to center (1.0x)
+  resetSliders();
+  updateSliderImpacts();
   recalculate();
 }
 
 function setField(id, val) {
   document.getElementById(id).value = val.toLocaleString();
+}
+
+// ──────────────────────────────────────────
+// Lifestyle Priority Sliders
+// ──────────────────────────────────────────
+
+// Mapping: slider name -> list of { freq, key } spending items it controls
+const SLIDER_MAPPING = {
+  housing:   [{ freq:'monthly', key:'rent' }, { freq:'monthly', key:'utilities' }, { freq:'monthly', key:'rentersins' }, { freq:'monthly', key:'laundry' }, { freq:'monthly', key:'internet' }, { freq:'monthly', key:'phone' }],
+  food:      [{ freq:'monthly', key:'groceries' }, { freq:'weekly', key:'dining' }, { freq:'weekly', key:'takeout' }, { freq:'daily', key:'lunch' }, { freq:'daily', key:'coffee' }, { freq:'daily', key:'snacks' }, { freq:'daily', key:'tips' }],
+  nightlife: [{ freq:'weekly', key:'bars' }, { freq:'weekly', key:'entertainment' }, { freq:'weekly', key:'rideshare' }],
+  travel:    [{ freq:'annual', key:'vacations' }, { freq:'annual', key:'flights' }],
+  health:    [{ freq:'monthly', key:'gym' }, { freq:'monthly', key:'therapy' }, { freq:'annual', key:'medical' }],
+  shopping:  [{ freq:'annual', key:'clothing' }, { freq:'annual', key:'electronics' }, { freq:'annual', key:'furniture' }, { freq:'annual', key:'gifts' }],
+};
+
+// Base spending values: captured when preset is applied or manually set
+// Key format: "freq:key" -> base number value
+let baseSpendingValues = {};
+
+function captureBaseValues() {
+  // Capture current spending input values as base values
+  document.querySelectorAll('input[data-freq][data-key]').forEach(inp => {
+    const k = inp.dataset.freq + ':' + inp.dataset.key;
+    const v = parseFloat(inp.value.replace(/[^0-9.]/g, '')) || 0;
+    if (v > 0) baseSpendingValues[k] = v;
+  });
+}
+
+function sliderToMultiplier(val) {
+  // val 1-5, center at 3 = 1.0x
+  // Uses exponential curve: pow(1.8, val-3)
+  // 1 -> 0.31x, 2 -> 0.56x, 3 -> 1.0x, 4 -> 1.8x, 5 -> 3.24x
+  return Math.pow(1.8, val - 3);
+}
+
+function onSlider(el) {
+  const sliderName = el.id.replace('slider-', '');
+  const val = parseFloat(el.value);
+  const mult = sliderToMultiplier(val);
+
+  // Update multiplier badge
+  document.getElementById('mult-' + sliderName).textContent = mult.toFixed(1) + 'x';
+
+  // Apply multiplier to mapped spending items
+  const items = SLIDER_MAPPING[sliderName] || [];
+  let annualImpact = 0;
+  for (const { freq, key } of items) {
+    const baseKey = freq + ':' + key;
+    const base = baseSpendingValues[baseKey];
+    if (base === undefined) continue;
+    const scaled = Math.round(base * mult);
+    const inp = document.querySelector(`input[data-freq="${freq}"][data-key="${key}"]`);
+    if (inp) {
+      inp.value = scaled.toLocaleString();
+      // Compute annual impact
+      const freqMult = freq === 'annual' ? 1 : freq === 'monthly' ? 12 : freq === 'weekly' ? 52 : 365;
+      annualImpact += scaled * freqMult;
+    }
+  }
+
+  // Show annual impact under slider
+  const impactEl = document.getElementById('impact-' + sliderName);
+  if (impactEl) {
+    impactEl.textContent = fmtk(annualImpact) + '/yr';
+  }
+
+  recalculate();
+}
+
+function resetSliders() {
+  for (const name of Object.keys(SLIDER_MAPPING)) {
+    const slider = document.getElementById('slider-' + name);
+    if (slider) slider.value = 3;
+    const mult = document.getElementById('mult-' + name);
+    if (mult) mult.textContent = '1.0x';
+    const impact = document.getElementById('impact-' + name);
+    if (impact) impact.textContent = '';
+  }
+}
+
+function updateSliderImpacts() {
+  // Refresh the annual impact display for all sliders at current values
+  for (const name of Object.keys(SLIDER_MAPPING)) {
+    const items = SLIDER_MAPPING[name] || [];
+    let annualImpact = 0;
+    for (const { freq, key } of items) {
+      const inp = document.querySelector(`input[data-freq="${freq}"][data-key="${key}"]`);
+      if (!inp) continue;
+      const val = parseFloat(inp.value.replace(/[^0-9.]/g, '')) || 0;
+      const freqMult = freq === 'annual' ? 1 : freq === 'monthly' ? 12 : freq === 'weekly' ? 52 : 365;
+      annualImpact += val * freqMult;
+    }
+    const impactEl = document.getElementById('impact-' + name);
+    if (impactEl) {
+      impactEl.textContent = annualImpact > 0 ? fmtk(annualImpact) + '/yr' : '';
+    }
+  }
 }
 
 // ──────────────────────────────────────────
