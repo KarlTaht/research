@@ -1,0 +1,1288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NYC Tax & Budget Calculator</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface2: #242836;
+  --border: #2e3347;
+  --text: #e4e6f0;
+  --text-muted: #8b90a5;
+  --accent: #6c8cff;
+  --accent-dim: #4a62b8;
+  --green: #4caf7d;
+  --red: #e05565;
+  --orange: #e0a050;
+  --yellow: #d4c455;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 20px;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+header p {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 860px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.card h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card h2 .icon {
+  font-size: 18px;
+}
+
+.card.full-width {
+  grid-column: 1 / -1;
+}
+
+/* Form elements */
+.field {
+  margin-bottom: 16px;
+}
+
+.field:last-child {
+  margin-bottom: 0;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+  font-weight: 500;
+}
+
+.field input, .field select {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 15px;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+
+.field input:focus, .field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.field input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.field-row {
+  display: flex;
+  gap: 12px;
+}
+
+.field-row .field {
+  flex: 1;
+}
+
+.field .hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+/* Spending categories */
+.spending-section {
+  margin-bottom: 20px;
+}
+
+.spending-section:last-child {
+  margin-bottom: 0;
+}
+
+.spending-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.spending-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.spending-header .freq-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.freq-annual .freq-badge { background: #2a2040; color: #b08cff; }
+.freq-monthly .freq-badge { background: #1a2a3a; color: #6cb8ff; }
+.freq-weekly .freq-badge { background: #1a3028; color: #5cc89a; }
+.freq-daily .freq-badge { background: #2a2a1a; color: #d4c455; }
+
+.spending-items {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+@media (max-width: 500px) {
+  .spending-items { grid-template-columns: 1fr; }
+}
+
+.spending-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.spending-item label {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 90px;
+}
+
+.spending-item input {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  text-align: right;
+}
+
+.spending-item input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.spending-subtotal {
+  text-align: right;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.spending-subtotal span {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Results */
+.result-group {
+  margin-bottom: 20px;
+}
+
+.result-group:last-child {
+  margin-bottom: 0;
+}
+
+.result-group h3 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.result-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 0;
+  font-size: 14px;
+}
+
+.result-row.indent {
+  padding-left: 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.result-row.total {
+  font-weight: 700;
+  font-size: 15px;
+  padding-top: 10px;
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.result-row .val { font-variant-numeric: tabular-nums; }
+.result-row .val.negative { color: var(--red); }
+.result-row .val.positive { color: var(--green); }
+.result-row .val.accent { color: var(--accent); }
+
+.rate-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+/* Summary bar */
+.summary-bar {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .summary-bar { grid-template-columns: repeat(2, 1fr); }
+}
+
+.summary-stat {
+  background: var(--surface2);
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+}
+
+.summary-stat .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.summary-stat .value {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-stat .sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.surplus { color: var(--green); }
+.deficit { color: var(--red); }
+.neutral { color: var(--accent); }
+
+/* Bar chart */
+.bar-chart {
+  margin-top: 16px;
+}
+
+.bar-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.bar-label {
+  width: 120px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.bar-track {
+  flex: 1;
+  height: 22px;
+  background: var(--surface2);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  min-width: 2px;
+}
+
+.bar-value {
+  width: 90px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  padding-left: 10px;
+}
+
+.bar-federal { background: #6c8cff; }
+.bar-state { background: #b08cff; }
+.bar-city { background: #ff8c6c; }
+.bar-fica { background: #5cc89a; }
+.bar-insurance { background: #e0a050; }
+.bar-retirement { background: #d4c455; }
+
+/* Footer */
+footer {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Custom spending row */
+.custom-row {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.custom-row input[type="text"] {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.custom-row input[type="number"] {
+  width: 100px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  text-align: right;
+}
+
+.custom-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.btn-add {
+  padding: 6px 12px;
+  background: var(--accent-dim);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-add:hover {
+  background: var(--accent);
+}
+
+.btn-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.btn-remove:hover {
+  color: var(--red);
+}
+
+/* Preset buttons */
+.presets {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.preset-btn {
+  padding: 6px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.preset-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.preset-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: white;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>NYC Tax & Budget Calculator</h1>
+    <p>Federal + NY State + NYC taxes | 2024 brackets | Take-home pay & lifestyle budget planner</p>
+  </header>
+
+  <!-- Presets -->
+  <div class="card full-width" style="margin-bottom: 24px;">
+    <h2><span class="icon">&#9881;</span> Quick Presets</h2>
+    <div class="presets">
+      <button class="preset-btn" onclick="applyPreset('junior')">Junior ($150K)</button>
+      <button class="preset-btn" onclick="applyPreset('mid')">Mid-Level ($225K)</button>
+      <button class="preset-btn" onclick="applyPreset('senior')">Senior ($350K)</button>
+      <button class="preset-btn" onclick="applyPreset('staff')">Staff/Principal ($500K)</button>
+      <button class="preset-btn" onclick="applyPreset('director')">Director ($750K)</button>
+      <button class="preset-btn" onclick="applyPreset('exec')">Executive ($1.2M)</button>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- LEFT COLUMN: Inputs -->
+    <div>
+      <!-- Income -->
+      <div class="card" style="margin-bottom: 24px;">
+        <h2><span class="icon">&#128176;</span> Income</h2>
+        <div class="field">
+          <label>Base Salary (Annual)</label>
+          <input type="text" id="salary" inputmode="numeric" placeholder="200,000" oninput="formatAndCalc(this)">
+        </div>
+        <div class="field">
+          <label>Annual Bonus</label>
+          <input type="text" id="bonus" inputmode="numeric" placeholder="40,000" oninput="formatAndCalc(this)">
+          <div class="hint">Taxed as supplemental income (same brackets apply)</div>
+        </div>
+        <div class="field">
+          <label>Other Income (RSUs, Side Income, etc.)</label>
+          <input type="text" id="otherIncome" inputmode="numeric" placeholder="0" oninput="formatAndCalc(this)">
+        </div>
+        <div class="field">
+          <label>Filing Status</label>
+          <select id="filingStatus" onchange="recalculate()">
+            <option value="single">Single</option>
+            <option value="married">Married Filing Jointly</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Pre-tax Deductions -->
+      <div class="card" style="margin-bottom: 24px;">
+        <h2><span class="icon">&#128179;</span> Pre-Tax Deductions</h2>
+        <div class="field-row">
+          <div class="field">
+            <label>401(k) Contribution</label>
+            <input type="text" id="retirement" inputmode="numeric" placeholder="23,500" oninput="formatAndCalc(this)">
+            <div class="hint">2024 limit: $23,500</div>
+          </div>
+          <div class="field">
+            <label>Health Insurance (Annual)</label>
+            <input type="text" id="insurance" inputmode="numeric" placeholder="3,600" oninput="formatAndCalc(this)">
+            <div class="hint">Pre-tax premium (employer plan)</div>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>HSA Contribution</label>
+            <input type="text" id="hsa" inputmode="numeric" placeholder="0" oninput="formatAndCalc(this)">
+            <div class="hint">2024 limit: $4,150 (self)</div>
+          </div>
+          <div class="field">
+            <label>Other Pre-Tax Deductions</label>
+            <input type="text" id="otherDeductions" inputmode="numeric" placeholder="0" oninput="formatAndCalc(this)">
+            <div class="hint">Transit, FSA, etc.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Spending -->
+      <div class="card">
+        <h2><span class="icon">&#128184;</span> Lifestyle Spending</h2>
+
+        <!-- Annual -->
+        <div class="spending-section freq-annual">
+          <div class="spending-header">
+            <h3><span class="freq-badge">ANNUAL</span> Big-Ticket & Annual</h3>
+          </div>
+          <div class="spending-items" id="spend-annual">
+            <div class="spending-item">
+              <label>Vacations</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="vacations" placeholder="5,000" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Flights</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="flights" placeholder="2,000" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Furniture</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="furniture" placeholder="2,000" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Clothing</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="clothing" placeholder="3,000" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Electronics</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="electronics" placeholder="1,500" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Gifts</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="gifts" placeholder="1,500" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Medical/Dental</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="medical" placeholder="1,000" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Tax Prep/CPA</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="taxpro" placeholder="500" oninput="formatAndCalc(this)">
+            </div>
+          </div>
+          <div class="spending-subtotal">Annual total: <span id="subtotal-annual">$0</span></div>
+        </div>
+
+        <!-- Monthly -->
+        <div class="spending-section freq-monthly">
+          <div class="spending-header">
+            <h3><span class="freq-badge">MONTHLY</span> Fixed Monthly</h3>
+          </div>
+          <div class="spending-items" id="spend-monthly">
+            <div class="spending-item">
+              <label>Rent</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="rent" placeholder="3,200" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Utilities</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="utilities" placeholder="150" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Internet</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="internet" placeholder="70" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Phone</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="phone" placeholder="85" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Streaming</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="streaming" placeholder="60" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Gym</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="gym" placeholder="120" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Groceries</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="groceries" placeholder="600" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Laundry/Clean</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="laundry" placeholder="80" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Subscriptions</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="subscriptions" placeholder="50" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Pet Care</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="pet" placeholder="0" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Renters Ins.</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="rentersins" placeholder="30" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Therapy</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="therapy" placeholder="0" oninput="formatAndCalc(this)">
+            </div>
+          </div>
+          <div class="spending-subtotal">Monthly total: <span id="subtotal-monthly">$0</span> &middot; Annual: <span id="subtotal-monthly-annual">$0</span></div>
+        </div>
+
+        <!-- Weekly -->
+        <div class="spending-section freq-weekly">
+          <div class="spending-header">
+            <h3><span class="freq-badge">WEEKLY</span> Weekly Recurring</h3>
+          </div>
+          <div class="spending-items" id="spend-weekly">
+            <div class="spending-item">
+              <label>Transit/Metro</label>
+              <input type="text" inputmode="numeric" data-freq="weekly" data-key="transit" placeholder="33" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Dining Out</label>
+              <input type="text" inputmode="numeric" data-freq="weekly" data-key="dining" placeholder="150" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Bars/Drinks</label>
+              <input type="text" inputmode="numeric" data-freq="weekly" data-key="bars" placeholder="75" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Entertainment</label>
+              <input type="text" inputmode="numeric" data-freq="weekly" data-key="entertainment" placeholder="50" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Rideshare</label>
+              <input type="text" inputmode="numeric" data-freq="weekly" data-key="rideshare" placeholder="40" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Takeout/Deliv</label>
+              <input type="text" inputmode="numeric" data-freq="weekly" data-key="takeout" placeholder="60" oninput="formatAndCalc(this)">
+            </div>
+          </div>
+          <div class="spending-subtotal">Weekly total: <span id="subtotal-weekly">$0</span> &middot; Annual: <span id="subtotal-weekly-annual">$0</span></div>
+        </div>
+
+        <!-- Daily -->
+        <div class="spending-section freq-daily">
+          <div class="spending-header">
+            <h3><span class="freq-badge">DAILY</span> Daily Habits</h3>
+          </div>
+          <div class="spending-items" id="spend-daily">
+            <div class="spending-item">
+              <label>Coffee</label>
+              <input type="text" inputmode="numeric" data-freq="daily" data-key="coffee" placeholder="6" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Lunch</label>
+              <input type="text" inputmode="numeric" data-freq="daily" data-key="lunch" placeholder="16" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Snacks/Misc</label>
+              <input type="text" inputmode="numeric" data-freq="daily" data-key="snacks" placeholder="5" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Tips</label>
+              <input type="text" inputmode="numeric" data-freq="daily" data-key="tips" placeholder="3" oninput="formatAndCalc(this)">
+            </div>
+          </div>
+          <div class="spending-subtotal">Daily total: <span id="subtotal-daily">$0</span> &middot; Annual: <span id="subtotal-daily-annual">$0</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: Results -->
+    <div>
+      <!-- Tax Breakdown -->
+      <div class="card" style="margin-bottom: 24px;">
+        <h2><span class="icon">&#128200;</span> Tax Breakdown</h2>
+
+        <div class="result-group">
+          <h3>Gross Income</h3>
+          <div class="result-row">
+            <span>Base Salary</span>
+            <span class="val" id="r-salary">$0</span>
+          </div>
+          <div class="result-row">
+            <span>Bonus</span>
+            <span class="val" id="r-bonus">$0</span>
+          </div>
+          <div class="result-row">
+            <span>Other Income</span>
+            <span class="val" id="r-other">$0</span>
+          </div>
+          <div class="result-row total">
+            <span>Total Gross</span>
+            <span class="val accent" id="r-gross">$0</span>
+          </div>
+        </div>
+
+        <div class="result-group">
+          <h3>Pre-Tax Deductions</h3>
+          <div class="result-row indent">
+            <span>401(k)</span>
+            <span class="val negative" id="r-401k">$0</span>
+          </div>
+          <div class="result-row indent">
+            <span>Health Insurance</span>
+            <span class="val negative" id="r-ins">$0</span>
+          </div>
+          <div class="result-row indent">
+            <span>HSA</span>
+            <span class="val negative" id="r-hsa">$0</span>
+          </div>
+          <div class="result-row indent">
+            <span>Other Pre-Tax</span>
+            <span class="val negative" id="r-othded">$0</span>
+          </div>
+          <div class="result-row total">
+            <span>Taxable Income</span>
+            <span class="val" id="r-taxable">$0</span>
+          </div>
+        </div>
+
+        <div class="result-group">
+          <h3>Taxes</h3>
+          <div class="result-row">
+            <span>Federal Income Tax <span class="rate-badge" id="r-fed-rate"></span></span>
+            <span class="val negative" id="r-fed">$0</span>
+          </div>
+          <div class="result-row">
+            <span>NY State Tax <span class="rate-badge" id="r-state-rate"></span></span>
+            <span class="val negative" id="r-state">$0</span>
+          </div>
+          <div class="result-row">
+            <span>NYC Tax <span class="rate-badge" id="r-city-rate"></span></span>
+            <span class="val negative" id="r-city">$0</span>
+          </div>
+          <div class="result-row">
+            <span>Social Security <span class="rate-badge">6.2%</span></span>
+            <span class="val negative" id="r-ss">$0</span>
+          </div>
+          <div class="result-row">
+            <span>Medicare <span class="rate-badge" id="r-med-rate">1.45%</span></span>
+            <span class="val negative" id="r-med">$0</span>
+          </div>
+          <div class="result-row total">
+            <span>Total Tax</span>
+            <span class="val negative" id="r-totaltax">$0</span>
+          </div>
+        </div>
+
+        <div class="result-group">
+          <div class="result-row total" style="border-top: 2px solid var(--accent);">
+            <span>Effective Tax Rate</span>
+            <span class="val accent" id="r-effective-rate">0%</span>
+          </div>
+        </div>
+
+        <!-- Visual bar chart of deductions -->
+        <div class="bar-chart" id="tax-bars"></div>
+      </div>
+
+      <!-- Take-Home -->
+      <div class="card" style="margin-bottom: 24px;">
+        <h2><span class="icon">&#127968;</span> Take-Home Pay</h2>
+        <div class="result-row total" style="border-top: none; margin-top: 0; padding-top: 0;">
+          <span>Annual Take-Home</span>
+          <span class="val positive" id="r-takehome-annual">$0</span>
+        </div>
+        <div class="result-row">
+          <span>Monthly Take-Home</span>
+          <span class="val positive" id="r-takehome-monthly">$0</span>
+        </div>
+        <div class="result-row">
+          <span>Biweekly Paycheck</span>
+          <span class="val" id="r-takehome-biweekly">$0</span>
+        </div>
+      </div>
+
+      <!-- Budget Summary -->
+      <div class="card" style="margin-bottom: 24px;">
+        <h2><span class="icon">&#128202;</span> Budget Summary</h2>
+        <div class="result-row">
+          <span>Annual Take-Home</span>
+          <span class="val positive" id="r-budget-income">$0</span>
+        </div>
+        <div class="result-row indent">
+          <span>Annual Spending</span>
+          <span class="val" id="r-spend-annual-cat">$0</span>
+        </div>
+        <div class="result-row indent">
+          <span>Monthly Spending (&times;12)</span>
+          <span class="val" id="r-spend-monthly-cat">$0</span>
+        </div>
+        <div class="result-row indent">
+          <span>Weekly Spending (&times;52)</span>
+          <span class="val" id="r-spend-weekly-cat">$0</span>
+        </div>
+        <div class="result-row indent">
+          <span>Daily Spending (&times;365)</span>
+          <span class="val" id="r-spend-daily-cat">$0</span>
+        </div>
+        <div class="result-row total">
+          <span>Total Annual Spending</span>
+          <span class="val negative" id="r-total-spending">$0</span>
+        </div>
+        <div class="result-row total" style="border-top: 2px solid var(--green);">
+          <span id="r-remainder-label">Annual Savings</span>
+          <span class="val" id="r-remainder">$0</span>
+        </div>
+        <div class="result-row">
+          <span id="r-remainder-mo-label">Monthly Savings</span>
+          <span class="val" id="r-remainder-mo">$0</span>
+        </div>
+        <div class="result-row" style="margin-top: 8px;">
+          <span>Savings Rate</span>
+          <span class="val" id="r-savings-rate">0%</span>
+        </div>
+      </div>
+
+      <!-- Summary Stats -->
+      <div class="card">
+        <h2><span class="icon">&#9889;</span> At a Glance</h2>
+        <div class="summary-bar">
+          <div class="summary-stat">
+            <div class="label">Gross</div>
+            <div class="value neutral" id="s-gross">$0</div>
+            <div class="sub">annual</div>
+          </div>
+          <div class="summary-stat">
+            <div class="label">Taxes + Ded.</div>
+            <div class="value" style="color: var(--red);" id="s-taxes">$0</div>
+            <div class="sub" id="s-tax-pct">0%</div>
+          </div>
+          <div class="summary-stat">
+            <div class="label">Spending</div>
+            <div class="value" style="color: var(--orange);" id="s-spending">$0</div>
+            <div class="sub" id="s-spend-pct">0%</div>
+          </div>
+          <div class="summary-stat">
+            <div class="label">Savings</div>
+            <div class="value" id="s-savings">$0</div>
+            <div class="sub" id="s-save-pct">0%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <p>Tax brackets: 2024 IRS (Federal), NY State, NYC. Standard deduction applied. For estimation only — consult a tax professional.</p>
+  </footer>
+</div>
+
+<script>
+// ──────────────────────────────────────────
+// Tax brackets (2024)
+// ──────────────────────────────────────────
+
+const FEDERAL_SINGLE = [
+  [11600, 0.10],
+  [47150 - 11600, 0.12],
+  [100525 - 47150, 0.22],
+  [191950 - 100525, 0.24],
+  [243725 - 191950, 0.32],
+  [609350 - 243725, 0.35],
+  [Infinity, 0.37],
+];
+
+const FEDERAL_MARRIED = [
+  [23200, 0.10],
+  [94300 - 23200, 0.12],
+  [201050 - 94300, 0.22],
+  [383900 - 201050, 0.24],
+  [487450 - 383900, 0.32],
+  [731200 - 487450, 0.35],
+  [Infinity, 0.37],
+];
+
+const NY_STATE = [
+  [8500, 0.04],
+  [11700 - 8500, 0.045],
+  [13900 - 11700, 0.0525],
+  [80650 - 13900, 0.055],
+  [215400 - 80650, 0.06],
+  [1077550 - 215400, 0.0685],
+  [5000000 - 1077550, 0.0965],
+  [25000000 - 5000000, 0.103],
+  [Infinity, 0.109],
+];
+
+const NYC_TAX = [
+  [12000, 0.03078],
+  [25000 - 12000, 0.03762],
+  [50000 - 25000, 0.03819],
+  [Infinity, 0.03876],
+];
+
+const STANDARD_DEDUCTION_SINGLE = 14600;
+const STANDARD_DEDUCTION_MARRIED = 29200;
+const SS_RATE = 0.062;
+const SS_WAGE_BASE = 168600;
+const MEDICARE_RATE = 0.0145;
+const MEDICARE_ADDITIONAL_RATE = 0.009;
+const MEDICARE_THRESHOLD_SINGLE = 200000;
+const MEDICARE_THRESHOLD_MARRIED = 250000;
+
+// ──────────────────────────────────────────
+// Utility
+// ──────────────────────────────────────────
+
+function parseNum(id) {
+  const el = typeof id === 'string' ? document.getElementById(id) : id;
+  if (!el) return 0;
+  return parseFloat(el.value.replace(/[^0-9.]/g, '')) || 0;
+}
+
+function fmt(n) {
+  if (n < 0) return '-$' + Math.abs(Math.round(n)).toLocaleString();
+  return '$' + Math.round(n).toLocaleString();
+}
+
+function fmtk(n) {
+  const abs = Math.abs(n);
+  if (abs >= 1000000) return (n < 0 ? '-' : '') + '$' + (abs / 1000000).toFixed(1) + 'M';
+  if (abs >= 1000) return (n < 0 ? '-' : '') + '$' + (abs / 1000).toFixed(0) + 'K';
+  return fmt(n);
+}
+
+function pct(n) {
+  return (n * 100).toFixed(1) + '%';
+}
+
+function formatAndCalc(el) {
+  // Format number with commas as user types
+  const raw = el.value.replace(/[^0-9.]/g, '');
+  if (raw === '' || raw === '.') {
+    el.value = raw;
+  } else {
+    const parts = raw.split('.');
+    parts[0] = parseInt(parts[0] || '0').toLocaleString();
+    el.value = parts.join('.');
+  }
+  recalculate();
+}
+
+function calcBrackets(income, brackets) {
+  let tax = 0;
+  let remaining = income;
+  let topRate = 0;
+  for (const [size, rate] of brackets) {
+    if (remaining <= 0) break;
+    const taxable = Math.min(remaining, size);
+    tax += taxable * rate;
+    topRate = rate;
+    remaining -= taxable;
+  }
+  return { tax, topRate };
+}
+
+// ──────────────────────────────────────────
+// Main calculation
+// ──────────────────────────────────────────
+
+function recalculate() {
+  const salary = parseNum('salary');
+  const bonus = parseNum('bonus');
+  const otherIncome = parseNum('otherIncome');
+  const retirement = parseNum('retirement');
+  const insurance = parseNum('insurance');
+  const hsa = parseNum('hsa');
+  const otherDed = parseNum('otherDeductions');
+  const filing = document.getElementById('filingStatus').value;
+
+  const gross = salary + bonus + otherIncome;
+  const totalPreTax = retirement + insurance + hsa + otherDed;
+
+  // FICA is on gross (before 401k for SS/Medicare)
+  const ssIncome = Math.min(gross, SS_WAGE_BASE);
+  const ssTax = ssIncome * SS_RATE;
+
+  const medicareThreshold = filing === 'married' ? MEDICARE_THRESHOLD_MARRIED : MEDICARE_THRESHOLD_SINGLE;
+  let medicareTax = gross * MEDICARE_RATE;
+  if (gross > medicareThreshold) {
+    medicareTax += (gross - medicareThreshold) * MEDICARE_ADDITIONAL_RATE;
+  }
+
+  // Taxable income for income taxes (after pre-tax deductions and standard deduction)
+  const standardDed = filing === 'married' ? STANDARD_DEDUCTION_MARRIED : STANDARD_DEDUCTION_SINGLE;
+  const federalBrackets = filing === 'married' ? FEDERAL_MARRIED : FEDERAL_SINGLE;
+  const taxableIncome = Math.max(0, gross - totalPreTax - standardDed);
+
+  // NY State and NYC tax on income after pre-tax deductions but using NY standard deduction ($8,000 single / $16,050 married)
+  const nyStandardDed = filing === 'married' ? 16050 : 8000;
+  const stateTaxableIncome = Math.max(0, gross - totalPreTax - nyStandardDed);
+
+  const federal = calcBrackets(taxableIncome, federalBrackets);
+  const state = calcBrackets(stateTaxableIncome, NY_STATE);
+  const city = calcBrackets(stateTaxableIncome, NYC_TAX);
+
+  const totalTax = federal.tax + state.tax + city.tax + ssTax + medicareTax;
+  const totalDeductions = totalTax + totalPreTax;
+  const takeHome = gross - totalDeductions;
+
+  // ── Update income display ──
+  document.getElementById('r-salary').textContent = fmt(salary);
+  document.getElementById('r-bonus').textContent = fmt(bonus);
+  document.getElementById('r-other').textContent = fmt(otherIncome);
+  document.getElementById('r-gross').textContent = fmt(gross);
+
+  // ── Pre-tax deductions ──
+  document.getElementById('r-401k').textContent = fmt(-retirement);
+  document.getElementById('r-ins').textContent = fmt(-insurance);
+  document.getElementById('r-hsa').textContent = fmt(-hsa);
+  document.getElementById('r-othded').textContent = fmt(-otherDed);
+  document.getElementById('r-taxable').textContent = fmt(taxableIncome);
+
+  // ── Taxes ──
+  document.getElementById('r-fed').textContent = fmt(-federal.tax);
+  document.getElementById('r-fed-rate').textContent = pct(federal.topRate);
+  document.getElementById('r-state').textContent = fmt(-state.tax);
+  document.getElementById('r-state-rate').textContent = pct(state.topRate);
+  document.getElementById('r-city').textContent = fmt(-city.tax);
+  document.getElementById('r-city-rate').textContent = pct(city.topRate);
+  document.getElementById('r-ss').textContent = fmt(-ssTax);
+  document.getElementById('r-med').textContent = fmt(-medicareTax);
+  document.getElementById('r-med-rate').textContent = gross > medicareThreshold ? '2.35%' : '1.45%';
+  document.getElementById('r-totaltax').textContent = fmt(-totalTax);
+
+  // Effective rate
+  const effectiveRate = gross > 0 ? totalTax / gross : 0;
+  document.getElementById('r-effective-rate').textContent = pct(effectiveRate);
+
+  // ── Tax bar chart ──
+  const maxTax = Math.max(federal.tax, state.tax, city.tax, ssTax, medicareTax, 1);
+  const barData = [
+    { label: 'Federal', value: federal.tax, cls: 'bar-federal' },
+    { label: 'NY State', value: state.tax, cls: 'bar-state' },
+    { label: 'NYC', value: city.tax, cls: 'bar-city' },
+    { label: 'Soc. Security', value: ssTax, cls: 'bar-fica' },
+    { label: 'Medicare', value: medicareTax, cls: 'bar-fica' },
+    { label: 'Health Ins.', value: insurance, cls: 'bar-insurance' },
+    { label: '401(k)', value: retirement, cls: 'bar-retirement' },
+  ];
+  let barHTML = '';
+  for (const b of barData) {
+    const w = Math.max(0, (b.value / maxTax) * 100);
+    barHTML += `<div class="bar-row">
+      <span class="bar-label">${b.label}</span>
+      <div class="bar-track"><div class="bar-fill ${b.cls}" style="width:${w}%"></div></div>
+      <span class="bar-value">${fmt(b.value)}</span>
+    </div>`;
+  }
+  document.getElementById('tax-bars').innerHTML = barHTML;
+
+  // ── Take-home ──
+  document.getElementById('r-takehome-annual').textContent = fmt(takeHome);
+  document.getElementById('r-takehome-monthly').textContent = fmt(takeHome / 12);
+  document.getElementById('r-takehome-biweekly').textContent = fmt(takeHome / 26);
+
+  // ── Spending ──
+  const spendAnnual = sumSpending('annual', 1);
+  const spendMonthly = sumSpending('monthly', 1);
+  const spendWeekly = sumSpending('weekly', 1);
+  const spendDaily = sumSpending('daily', 1);
+
+  const spendAnnualYear = spendAnnual;
+  const spendMonthlyYear = spendMonthly * 12;
+  const spendWeeklyYear = spendWeekly * 52;
+  const spendDailyYear = spendDaily * 365;
+  const totalSpending = spendAnnualYear + spendMonthlyYear + spendWeeklyYear + spendDailyYear;
+
+  document.getElementById('subtotal-annual').textContent = fmt(spendAnnual);
+  document.getElementById('subtotal-monthly').textContent = fmt(spendMonthly);
+  document.getElementById('subtotal-monthly-annual').textContent = fmt(spendMonthlyYear);
+  document.getElementById('subtotal-weekly').textContent = fmt(spendWeekly);
+  document.getElementById('subtotal-weekly-annual').textContent = fmt(spendWeeklyYear);
+  document.getElementById('subtotal-daily').textContent = fmt(spendDaily);
+  document.getElementById('subtotal-daily-annual').textContent = fmt(spendDailyYear);
+
+  // Budget summary
+  document.getElementById('r-budget-income').textContent = fmt(takeHome);
+  document.getElementById('r-spend-annual-cat').textContent = fmt(spendAnnualYear);
+  document.getElementById('r-spend-monthly-cat').textContent = fmt(spendMonthlyYear);
+  document.getElementById('r-spend-weekly-cat').textContent = fmt(spendWeeklyYear);
+  document.getElementById('r-spend-daily-cat').textContent = fmt(spendDailyYear);
+  document.getElementById('r-total-spending').textContent = fmt(-totalSpending);
+
+  const remainder = takeHome - totalSpending;
+  document.getElementById('r-remainder').textContent = fmt(remainder);
+  document.getElementById('r-remainder').className = 'val ' + (remainder >= 0 ? 'positive' : 'negative');
+  document.getElementById('r-remainder-label').textContent = remainder >= 0 ? 'Annual Savings' : 'Annual Deficit';
+  document.getElementById('r-remainder-mo').textContent = fmt(remainder / 12);
+  document.getElementById('r-remainder-mo').className = 'val ' + (remainder >= 0 ? 'positive' : 'negative');
+  document.getElementById('r-remainder-mo-label').textContent = remainder >= 0 ? 'Monthly Savings' : 'Monthly Deficit';
+
+  const savingsRate = takeHome > 0 ? remainder / takeHome : 0;
+  const srEl = document.getElementById('r-savings-rate');
+  srEl.textContent = pct(savingsRate);
+  srEl.className = 'val ' + (savingsRate >= 0.2 ? 'positive' : savingsRate >= 0 ? 'accent' : 'negative');
+
+  // ── At a glance ──
+  document.getElementById('s-gross').textContent = fmtk(gross);
+  document.getElementById('s-taxes').textContent = fmtk(totalDeductions);
+  document.getElementById('s-tax-pct').textContent = gross > 0 ? pct(totalDeductions / gross) + ' of gross' : '0%';
+  document.getElementById('s-spending').textContent = fmtk(totalSpending);
+  document.getElementById('s-spend-pct').textContent = takeHome > 0 ? pct(totalSpending / takeHome) + ' of net' : '0%';
+  document.getElementById('s-savings').textContent = fmtk(remainder);
+  document.getElementById('s-savings').className = 'value ' + (remainder >= 0 ? 'surplus' : 'deficit');
+  document.getElementById('s-save-pct').textContent = takeHome > 0 ? pct(remainder / takeHome) + ' of net' : '0%';
+}
+
+function sumSpending(freq, multiplier) {
+  let total = 0;
+  const inputs = document.querySelectorAll(`input[data-freq="${freq}"]`);
+  for (const inp of inputs) {
+    total += parseFloat(inp.value.replace(/[^0-9.]/g, '')) || 0;
+  }
+  return total * multiplier;
+}
+
+// ──────────────────────────────────────────
+// Presets
+// ──────────────────────────────────────────
+
+const PRESETS = {
+  junior: {
+    salary: 140000, bonus: 10000, otherIncome: 0,
+    retirement: 10000, insurance: 2400, hsa: 0, otherDeductions: 0,
+    spending: {
+      annual: { vacations: 3000, flights: 1000, furniture: 500, clothing: 1500, electronics: 800, gifts: 500, medical: 500, taxpro: 0 },
+      monthly: { rent: 2200, utilities: 100, internet: 60, phone: 85, streaming: 35, gym: 50, groceries: 450, laundry: 60, subscriptions: 20, pet: 0, rentersins: 25, therapy: 0 },
+      weekly: { transit: 33, dining: 80, bars: 40, entertainment: 30, rideshare: 20, takeout: 40 },
+      daily: { coffee: 5, lunch: 14, snacks: 3, tips: 2 },
+    },
+  },
+  mid: {
+    salary: 190000, bonus: 35000, otherIncome: 0,
+    retirement: 23500, insurance: 3000, hsa: 0, otherDeductions: 0,
+    spending: {
+      annual: { vacations: 5000, flights: 2000, furniture: 1500, clothing: 2500, electronics: 1200, gifts: 1000, medical: 800, taxpro: 300 },
+      monthly: { rent: 2800, utilities: 130, internet: 70, phone: 85, streaming: 50, gym: 100, groceries: 550, laundry: 70, subscriptions: 40, pet: 0, rentersins: 30, therapy: 0 },
+      weekly: { transit: 33, dining: 120, bars: 60, entertainment: 40, rideshare: 35, takeout: 50 },
+      daily: { coffee: 6, lunch: 16, snacks: 4, tips: 3 },
+    },
+  },
+  senior: {
+    salary: 280000, bonus: 70000, otherIncome: 0,
+    retirement: 23500, insurance: 3600, hsa: 4150, otherDeductions: 0,
+    spending: {
+      annual: { vacations: 8000, flights: 3000, furniture: 2500, clothing: 4000, electronics: 2000, gifts: 2000, medical: 1000, taxpro: 500 },
+      monthly: { rent: 3500, utilities: 150, internet: 70, phone: 85, streaming: 60, gym: 150, groceries: 650, laundry: 80, subscriptions: 60, pet: 100, rentersins: 30, therapy: 200 },
+      weekly: { transit: 33, dining: 180, bars: 80, entertainment: 60, rideshare: 50, takeout: 70 },
+      daily: { coffee: 7, lunch: 18, snacks: 5, tips: 4 },
+    },
+  },
+  staff: {
+    salary: 350000, bonus: 150000, otherIncome: 0,
+    retirement: 23500, insurance: 3600, hsa: 4150, otherDeductions: 1200,
+    spending: {
+      annual: { vacations: 15000, flights: 5000, furniture: 4000, clothing: 6000, electronics: 3000, gifts: 3000, medical: 1500, taxpro: 1000 },
+      monthly: { rent: 4500, utilities: 180, internet: 80, phone: 100, streaming: 70, gym: 200, groceries: 800, laundry: 100, subscriptions: 80, pet: 150, rentersins: 35, therapy: 300 },
+      weekly: { transit: 33, dining: 250, bars: 100, entertainment: 80, rideshare: 80, takeout: 100 },
+      daily: { coffee: 8, lunch: 20, snacks: 6, tips: 5 },
+    },
+  },
+  director: {
+    salary: 500000, bonus: 250000, otherIncome: 0,
+    retirement: 23500, insurance: 4800, hsa: 4150, otherDeductions: 3600,
+    spending: {
+      annual: { vacations: 25000, flights: 8000, furniture: 5000, clothing: 8000, electronics: 4000, gifts: 5000, medical: 2000, taxpro: 2000 },
+      monthly: { rent: 6000, utilities: 200, internet: 100, phone: 120, streaming: 80, gym: 250, groceries: 1000, laundry: 120, subscriptions: 100, pet: 200, rentersins: 40, therapy: 400 },
+      weekly: { transit: 0, dining: 350, bars: 150, entertainment: 120, rideshare: 150, takeout: 120 },
+      daily: { coffee: 10, lunch: 25, snacks: 8, tips: 7 },
+    },
+  },
+  exec: {
+    salary: 700000, bonus: 500000, otherIncome: 0,
+    retirement: 23500, insurance: 6000, hsa: 4150, otherDeductions: 6000,
+    spending: {
+      annual: { vacations: 40000, flights: 15000, furniture: 8000, clothing: 12000, electronics: 5000, gifts: 8000, medical: 3000, taxpro: 5000 },
+      monthly: { rent: 8500, utilities: 250, internet: 120, phone: 150, streaming: 100, gym: 350, groceries: 1400, laundry: 150, subscriptions: 150, pet: 300, rentersins: 50, therapy: 500 },
+      weekly: { transit: 0, dining: 500, bars: 200, entertainment: 200, rideshare: 250, takeout: 150 },
+      daily: { coffee: 12, lunch: 30, snacks: 10, tips: 10 },
+    },
+  },
+};
+
+function applyPreset(name) {
+  const p = PRESETS[name];
+  if (!p) return;
+
+  // Remove active from all preset buttons
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+
+  // Set income fields
+  setField('salary', p.salary);
+  setField('bonus', p.bonus);
+  setField('otherIncome', p.otherIncome);
+  setField('retirement', p.retirement);
+  setField('insurance', p.insurance);
+  setField('hsa', p.hsa);
+  setField('otherDeductions', p.otherDeductions);
+
+  // Set spending
+  for (const [freq, items] of Object.entries(p.spending)) {
+    for (const [key, val] of Object.entries(items)) {
+      const inp = document.querySelector(`input[data-freq="${freq}"][data-key="${key}"]`);
+      if (inp) inp.value = val.toLocaleString();
+    }
+  }
+
+  recalculate();
+}
+
+function setField(id, val) {
+  document.getElementById(id).value = val.toLocaleString();
+}
+
+// ──────────────────────────────────────────
+// Init
+// ──────────────────────────────────────────
+
+// Run initial calculation on load
+document.addEventListener('DOMContentLoaded', recalculate);
+</script>
+</body>
+</html>
