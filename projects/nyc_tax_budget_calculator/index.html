@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NYC Tax & Budget Calculator</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface2: #242836;
+  --border: #2e3347;
+  --text: #e4e6f0;
+  --text-muted: #8b90a5;
+  --accent: #6c8cff;
+  --accent-dim: #4a62b8;
+  --green: #4caf7d;
+  --red: #e05565;
+  --orange: #e0a050;
+  --yellow: #d4c455;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 20px;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+header p {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 860px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.card h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card h2 .icon {
+  font-size: 18px;
+}
+
+.card.full-width {
+  grid-column: 1 / -1;
+}
+
+/* Form elements */
+.field {
+  margin-bottom: 16px;
+}
+
+.field:last-child {
+  margin-bottom: 0;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+  font-weight: 500;
+}
+
+.field input, .field select {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 15px;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+
+.field input:focus, .field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.field input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.field-row {
+  display: flex;
+  gap: 12px;
+}
+
+.field-row .field {
+  flex: 1;
+}
+
+.field .hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+/* Spending categories */
+.spending-section {
+  margin-bottom: 20px;
+}
+
+.spending-section:last-child {
+  margin-bottom: 0;
+}
+
+.spending-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.spending-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.spending-header .freq-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.freq-annual .freq-badge { background: #2a2040; color: #b08cff; }
+.freq-monthly .freq-badge { background: #1a2a3a; color: #6cb8ff; }
+.freq-weekly .freq-badge { background: #1a3028; color: #5cc89a; }
+.freq-daily .freq-badge { background: #2a2a1a; color: #d4c455; }
+
+.spending-items {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+@media (max-width: 500px) {
+  .spending-items { grid-template-columns: 1fr; }
+}
+
+.spending-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.spending-item label {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 90px;
+}
+
+.spending-item input {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  text-align: right;
+}
+
+.spending-item input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.spending-subtotal {
+  text-align: right;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.spending-subtotal span {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Results */
+.result-group {
+  margin-bottom: 20px;
+}
+
+.result-group:last-child {
+  margin-bottom: 0;
+}
+
+.result-group h3 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.result-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 0;
+  font-size: 14px;
+}
+
+.result-row.indent {
+  padding-left: 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.result-row.total {
+  font-weight: 700;
+  font-size: 15px;
+  padding-top: 10px;
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.result-row .val { font-variant-numeric: tabular-nums; }
+.result-row .val.negative { color: var(--red); }
+.result-row .val.positive { color: var(--green); }
+.result-row .val.accent { color: var(--accent); }
+
+.rate-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+/* Summary bar */
+.summary-bar {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .summary-bar { grid-template-columns: repeat(2, 1fr); }
+}
+
+.summary-stat {
+  background: var(--surface2);
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+}
+
+.summary-stat .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.summary-stat .value {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-stat .sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.surplus { color: var(--green); }
+.deficit { color: var(--red); }
+.neutral { color: var(--accent); }
+
+/* Bar chart */
+.bar-chart {
+  margin-top: 16px;
+}
+
+.bar-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.bar-label {
+  width: 120px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.bar-track {
+  flex: 1;
+  height: 22px;
+  background: var(--surface2);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  min-width: 2px;
+}
+
+.bar-value {
+  width: 90px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  padding-left: 10px;
+}
+
+.bar-federal { background: #6c8cff; }
+.bar-state { background: #b08cff; }
+.bar-city { background: #ff8c6c; }
+.bar-fica { background: #5cc89a; }
+.bar-insurance { background: #e0a050; }
+.bar-retirement { background: #d4c455; }
+
+/* Footer */
+footer {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Priority sliders */
+.sliders-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 24px;
+}
+
+@media (max-width: 700px) {
+  .sliders-grid { grid-template-columns: 1fr; }
+}
+
+.slider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.slider-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.slider-label-row label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.slider-label-row .slider-mult {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.slider-track {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.slider-track input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface2);
+  outline: none;
+  cursor: pointer;
+}
+
+.slider-track input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--accent-dim);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.slider-track input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.slider-track input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--accent-dim);
+  cursor: pointer;
+}
+
+.slider-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: -2px;
+}
+
+.slider-group[data-color="blue"] .slider-mult { background: #1a2a3a; color: #6cb8ff; }
+.slider-group[data-color="green"] .slider-mult { background: #1a3028; color: #5cc89a; }
+.slider-group[data-color="purple"] .slider-mult { background: #2a2040; color: #b08cff; }
+.slider-group[data-color="orange"] .slider-mult { background: #2a2518; color: #e0a050; }
+.slider-group[data-color="red"] .slider-mult { background: #2a1a1a; color: #e07070; }
+.slider-group[data-color="yellow"] .slider-mult { background: #2a2a1a; color: #d4c455; }
+
+.slider-group[data-color="blue"] input[type="range"]::-webkit-slider-thumb { background: #6cb8ff; box-shadow: 0 0 0 1px #3a6899; }
+.slider-group[data-color="green"] input[type="range"]::-webkit-slider-thumb { background: #5cc89a; box-shadow: 0 0 0 1px #3a7a5a; }
+.slider-group[data-color="purple"] input[type="range"]::-webkit-slider-thumb { background: #b08cff; box-shadow: 0 0 0 1px #6a5099; }
+.slider-group[data-color="orange"] input[type="range"]::-webkit-slider-thumb { background: #e0a050; box-shadow: 0 0 0 1px #996830; }
+.slider-group[data-color="red"] input[type="range"]::-webkit-slider-thumb { background: #e07070; box-shadow: 0 0 0 1px #994040; }
+.slider-group[data-color="yellow"] input[type="range"]::-webkit-slider-thumb { background: #d4c455; box-shadow: 0 0 0 1px #998a30; }
+
+.slider-group[data-color="blue"] input[type="range"]::-moz-range-thumb { background: #6cb8ff; box-shadow: 0 0 0 1px #3a6899; }
+.slider-group[data-color="green"] input[type="range"]::-moz-range-thumb { background: #5cc89a; box-shadow: 0 0 0 1px #3a7a5a; }
+.slider-group[data-color="purple"] input[type="range"]::-moz-range-thumb { background: #b08cff; box-shadow: 0 0 0 1px #6a5099; }
+.slider-group[data-color="orange"] input[type="range"]::-moz-range-thumb { background: #e0a050; box-shadow: 0 0 0 1px #996830; }
+.slider-group[data-color="red"] input[type="range"]::-moz-range-thumb { background: #e07070; box-shadow: 0 0 0 1px #994040; }
+.slider-group[data-color="yellow"] input[type="range"]::-moz-range-thumb { background: #d4c455; box-shadow: 0 0 0 1px #998a30; }
+
+/* Preset buttons */
+.presets {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.preset-btn {
+  padding: 6px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.preset-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.preset-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: white;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>NYC Tax & Budget Calculator</h1>
+    <p>Federal + NY State + NYC taxes | 2024 brackets | Take-home pay & lifestyle budget planner</p>
+  </header>
+
+  <!-- Presets -->
+  <div class="card full-width" style="margin-bottom: 24px;">
+    <h2><span class="icon">&#9881;</span> Quick Presets</h2>
+    <div class="presets">
+      <button class="preset-btn" onclick="applyPreset('junior', this)">Junior ($150K)</button>
+      <button class="preset-btn" onclick="applyPreset('mid', this)">Mid-Level ($225K)</button>
+      <button class="preset-btn" onclick="applyPreset('senior', this)">Senior ($350K)</button>
+      <button class="preset-btn" onclick="applyPreset('staff', this)">Staff/Principal ($500K)</button>
+      <button class="preset-btn" onclick="applyPreset('director', this)">Director ($750K)</button>
+      <button class="preset-btn" onclick="applyPreset('exec', this)">Executive ($1.2M)</button>
+    </div>
+  </div>
+
+  <!-- Lifestyle Priority Sliders -->
+  <div class="card full-width" style="margin-bottom: 24px;">
+    <h2><span class="icon">&#9878;</span> Lifestyle Priorities <span style="font-weight: 400; font-size: 12px; color: var(--text-muted); margin-left: 8px;">Drag sliders to scale spending categories</span></h2>
+    <div class="sliders-grid">
+      <div class="slider-group" data-color="blue" data-slider="housing">
+        <div class="slider-label-row">
+          <label>Housing &amp; Home</label>
+          <span class="slider-mult" id="mult-housing">1.0x</span>
+        </div>
+        <div class="slider-track">
+          <input type="range" min="1" max="5" step="0.1" value="3" id="slider-housing" oninput="onSlider(this)">
+        </div>
+        <div class="slider-scale"><span>Minimal</span><span id="impact-housing"></span><span>Luxury</span></div>
+      </div>
+
+      <div class="slider-group" data-color="green" data-slider="food">
+        <div class="slider-label-row">
+          <label>Food &amp; Dining</label>
+          <span class="slider-mult" id="mult-food">1.0x</span>
+        </div>
+        <div class="slider-track">
+          <input type="range" min="1" max="5" step="0.1" value="3" id="slider-food" oninput="onSlider(this)">
+        </div>
+        <div class="slider-scale"><span>Cook at home</span><span id="impact-food"></span><span>Foodie life</span></div>
+      </div>
+
+      <div class="slider-group" data-color="purple" data-slider="nightlife">
+        <div class="slider-label-row">
+          <label>Going Out &amp; Social</label>
+          <span class="slider-mult" id="mult-nightlife">1.0x</span>
+        </div>
+        <div class="slider-track">
+          <input type="range" min="1" max="5" step="0.1" value="3" id="slider-nightlife" oninput="onSlider(this)">
+        </div>
+        <div class="slider-scale"><span>Homebody</span><span id="impact-nightlife"></span><span>Scene regular</span></div>
+      </div>
+
+      <div class="slider-group" data-color="orange" data-slider="travel">
+        <div class="slider-label-row">
+          <label>Travel &amp; Experiences</label>
+          <span class="slider-mult" id="mult-travel">1.0x</span>
+        </div>
+        <div class="slider-track">
+          <input type="range" min="1" max="5" step="0.1" value="3" id="slider-travel" oninput="onSlider(this)">
+        </div>
+        <div class="slider-scale"><span>Staycation</span><span id="impact-travel"></span><span>Globetrotter</span></div>
+      </div>
+
+      <div class="slider-group" data-color="red" data-slider="health">
+        <div class="slider-label-row">
+          <label>Health &amp; Wellness</label>
+          <span class="slider-mult" id="mult-health">1.0x</span>
+        </div>
+        <div class="slider-track">
+          <input type="range" min="1" max="5" step="0.1" value="3" id="slider-health" oninput="onSlider(this)">
+        </div>
+        <div class="slider-scale"><span>Basics</span><span id="impact-health"></span><span>Full wellness</span></div>
+      </div>
+
+      <div class="slider-group" data-color="yellow" data-slider="shopping">
+        <div class="slider-label-row">
+          <label>Style &amp; Shopping</label>
+          <span class="slider-mult" id="mult-shopping">1.0x</span>
+        </div>
+        <div class="slider-track">
+          <input type="range" min="1" max="5" step="0.1" value="3" id="slider-shopping" oninput="onSlider(this)">
+        </div>
+        <div class="slider-scale"><span>Thrifty</span><span id="impact-shopping"></span><span>Designer</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- LEFT COLUMN: Inputs -->
+    <div>
+      <!-- Income -->
+      <div class="card" style="margin-bottom: 24px;">
+        <h2><span class="icon">&#128176;</span> Income</h2>
+        <div class="field">
+          <label>Base Salary (Annual)</label>
+          <input type="text" id="salary" inputmode="numeric" placeholder="200,000" oninput="formatAndCalc(this)">
+        </div>
+        <div class="field">
+          <label>Annual Bonus</label>
+          <input type="text" id="bonus" inputmode="numeric" placeholder="40,000" oninput="formatAndCalc(this)">
+          <div class="hint">Taxed as supplemental income (same brackets apply)</div>
+        </div>
+        <div class="field">
+          <label>Other Income (RSUs, Side Income, etc.)</label>
+          <input type="text" id="otherIncome" inputmode="numeric" placeholder="0" oninput="formatAndCalc(this)">
+        </div>
+        <div class="field">
+          <label>Filing Status</label>
+          <select id="filingStatus" onchange="recalculate()">
+            <option value="single">Single</option>
+            <option value="married">Married Filing Jointly</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Pre-tax Deductions -->
+      <div class="card" style="margin-bottom: 24px;">
+        <h2><span class="icon">&#128179;</span> Pre-Tax Deductions</h2>
+        <div class="field-row">
+          <div class="field">
+            <label>401(k) Contribution</label>
+            <input type="text" id="retirement" inputmode="numeric" placeholder="23,500" oninput="formatAndCalc(this)">
+            <div class="hint">2024 limit: $23,500</div>
+          </div>
+          <div class="field">
+            <label>Health Insurance (Annual)</label>
+            <input type="text" id="insurance" inputmode="numeric" placeholder="3,600" oninput="formatAndCalc(this)">
+            <div class="hint">Pre-tax premium (employer plan)</div>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>HSA Contribution</label>
+            <input type="text" id="hsa" inputmode="numeric" placeholder="0" oninput="formatAndCalc(this)">
+            <div class="hint">2024 limit: $4,150 (self)</div>
+          </div>
+          <div class="field">
+            <label>Other Pre-Tax Deductions</label>
+            <input type="text" id="otherDeductions" inputmode="numeric" placeholder="0" oninput="formatAndCalc(this)">
+            <div class="hint">Transit, FSA, etc.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Spending -->
+      <div class="card">
+        <h2><span class="icon">&#128184;</span> Lifestyle Spending</h2>
+
+        <!-- Annual -->
+        <div class="spending-section freq-annual">
+          <div class="spending-header">
+            <h3><span class="freq-badge">ANNUAL</span> Big-Ticket & Annual</h3>
+          </div>
+          <div class="spending-items" id="spend-annual">
+            <div class="spending-item">
+              <label>Vacations</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="vacations" placeholder="5,000" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Flights</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="flights" placeholder="2,000" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Furniture</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="furniture" placeholder="2,000" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Clothing</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="clothing" placeholder="3,000" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Electronics</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="electronics" placeholder="1,500" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Gifts</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="gifts" placeholder="1,500" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Medical/Dental</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="medical" placeholder="1,000" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Tax Prep/CPA</label>
+              <input type="text" inputmode="numeric" data-freq="annual" data-key="taxpro" placeholder="500" oninput="formatAndCalc(this)">
+            </div>
+          </div>
+          <div class="spending-subtotal">Annual total: <span id="subtotal-annual">$0</span></div>
+        </div>
+
+        <!-- Monthly -->
+        <div class="spending-section freq-monthly">
+          <div class="spending-header">
+            <h3><span class="freq-badge">MONTHLY</span> Fixed Monthly</h3>
+          </div>
+          <div class="spending-items" id="spend-monthly">
+            <div class="spending-item">
+              <label>Rent</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="rent" placeholder="3,200" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Utilities</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="utilities" placeholder="150" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Internet</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="internet" placeholder="70" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Phone</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="phone" placeholder="85" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Streaming</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="streaming" placeholder="60" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Gym</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="gym" placeholder="120" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Groceries</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="groceries" placeholder="600" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Laundry/Clean</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="laundry" placeholder="80" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Subscriptions</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="subscriptions" placeholder="50" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Pet Care</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="pet" placeholder="0" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Renters Ins.</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="rentersins" placeholder="30" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Therapy</label>
+              <input type="text" inputmode="numeric" data-freq="monthly" data-key="therapy" placeholder="0" oninput="formatAndCalc(this)">
+            </div>
+          </div>
+          <div class="spending-subtotal">Monthly total: <span id="subtotal-monthly">$0</span> &middot; Annual: <span id="subtotal-monthly-annual">$0</span></div>
+        </div>
+
+        <!-- Weekly -->
+        <div class="spending-section freq-weekly">
+          <div class="spending-header">
+            <h3><span class="freq-badge">WEEKLY</span> Weekly Recurring</h3>
+          </div>
+          <div class="spending-items" id="spend-weekly">
+            <div class="spending-item">
+              <label>Transit/Metro</label>
+              <input type="text" inputmode="numeric" data-freq="weekly" data-key="transit" placeholder="33" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Dining Out</label>
+              <input type="text" inputmode="numeric" data-freq="weekly" data-key="dining" placeholder="150" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Bars/Drinks</label>
+              <input type="text" inputmode="numeric" data-freq="weekly" data-key="bars" placeholder="75" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Entertainment</label>
+              <input type="text" inputmode="numeric" data-freq="weekly" data-key="entertainment" placeholder="50" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Rideshare</label>
+              <input type="text" inputmode="numeric" data-freq="weekly" data-key="rideshare" placeholder="40" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Takeout/Deliv</label>
+              <input type="text" inputmode="numeric" data-freq="weekly" data-key="takeout" placeholder="60" oninput="formatAndCalc(this)">
+            </div>
+          </div>
+          <div class="spending-subtotal">Weekly total: <span id="subtotal-weekly">$0</span> &middot; Annual: <span id="subtotal-weekly-annual">$0</span></div>
+        </div>
+
+        <!-- Daily -->
+        <div class="spending-section freq-daily">
+          <div class="spending-header">
+            <h3><span class="freq-badge">DAILY</span> Daily Habits</h3>
+          </div>
+          <div class="spending-items" id="spend-daily">
+            <div class="spending-item">
+              <label>Coffee</label>
+              <input type="text" inputmode="numeric" data-freq="daily" data-key="coffee" placeholder="6" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Lunch</label>
+              <input type="text" inputmode="numeric" data-freq="daily" data-key="lunch" placeholder="16" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Snacks/Misc</label>
+              <input type="text" inputmode="numeric" data-freq="daily" data-key="snacks" placeholder="5" oninput="formatAndCalc(this)">
+            </div>
+            <div class="spending-item">
+              <label>Tips</label>
+              <input type="text" inputmode="numeric" data-freq="daily" data-key="tips" placeholder="3" oninput="formatAndCalc(this)">
+            </div>
+          </div>
+          <div class="spending-subtotal">Daily total: <span id="subtotal-daily">$0</span> &middot; Annual: <span id="subtotal-daily-annual">$0</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: Results -->
+    <div>
+      <!-- Tax Breakdown -->
+      <div class="card" style="margin-bottom: 24px;">
+        <h2><span class="icon">&#128200;</span> Tax Breakdown</h2>
+
+        <div class="result-group">
+          <h3>Gross Income</h3>
+          <div class="result-row">
+            <span>Base Salary</span>
+            <span class="val" id="r-salary">$0</span>
+          </div>
+          <div class="result-row">
+            <span>Bonus</span>
+            <span class="val" id="r-bonus">$0</span>
+          </div>
+          <div class="result-row">
+            <span>Other Income</span>
+            <span class="val" id="r-other">$0</span>
+          </div>
+          <div class="result-row total">
+            <span>Total Gross</span>
+            <span class="val accent" id="r-gross">$0</span>
+          </div>
+        </div>
+
+        <div class="result-group">
+          <h3>Pre-Tax Deductions</h3>
+          <div class="result-row indent">
+            <span>401(k)</span>
+            <span class="val negative" id="r-401k">$0</span>
+          </div>
+          <div class="result-row indent">
+            <span>Health Insurance</span>
+            <span class="val negative" id="r-ins">$0</span>
+          </div>
+          <div class="result-row indent">
+            <span>HSA</span>
+            <span class="val negative" id="r-hsa">$0</span>
+          </div>
+          <div class="result-row indent">
+            <span>Other Pre-Tax</span>
+            <span class="val negative" id="r-othded">$0</span>
+          </div>
+          <div class="result-row total">
+            <span>Taxable Income</span>
+            <span class="val" id="r-taxable">$0</span>
+          </div>
+        </div>
+
+        <div class="result-group">
+          <h3>Taxes</h3>
+          <div class="result-row">
+            <span>Federal Income Tax <span class="rate-badge" id="r-fed-rate"></span></span>
+            <span class="val negative" id="r-fed">$0</span>
+          </div>
+          <div class="result-row">
+            <span>NY State Tax <span class="rate-badge" id="r-state-rate"></span></span>
+            <span class="val negative" id="r-state">$0</span>
+          </div>
+          <div class="result-row">
+            <span>NYC Tax <span class="rate-badge" id="r-city-rate"></span></span>
+            <span class="val negative" id="r-city">$0</span>
+          </div>
+          <div class="result-row">
+            <span>Social Security <span class="rate-badge">6.2%</span></span>
+            <span class="val negative" id="r-ss">$0</span>
+          </div>
+          <div class="result-row">
+            <span>Medicare <span class="rate-badge" id="r-med-rate">1.45%</span></span>
+            <span class="val negative" id="r-med">$0</span>
+          </div>
+          <div class="result-row total">
+            <span>Total Tax</span>
+            <span class="val negative" id="r-totaltax">$0</span>
+          </div>
+        </div>
+
+        <div class="result-group">
+          <div class="result-row total" style="border-top: 2px solid var(--accent);">
+            <span>Effective Tax Rate</span>
+            <span class="val accent" id="r-effective-rate">0%</span>
+          </div>
+        </div>
+
+        <!-- Visual bar chart of deductions -->
+        <div class="bar-chart" id="tax-bars"></div>
+      </div>
+
+      <!-- Take-Home -->
+      <div class="card" style="margin-bottom: 24px;">
+        <h2><span class="icon">&#127968;</span> Take-Home Pay</h2>
+        <div class="result-row total" style="border-top: none; margin-top: 0; padding-top: 0;">
+          <span>Annual Take-Home</span>
+          <span class="val positive" id="r-takehome-annual">$0</span>
+        </div>
+        <div class="result-row">
+          <span>Monthly Take-Home</span>
+          <span class="val positive" id="r-takehome-monthly">$0</span>
+        </div>
+        <div class="result-row">
+          <span>Biweekly Paycheck</span>
+          <span class="val" id="r-takehome-biweekly">$0</span>
+        </div>
+      </div>
+
+      <!-- Budget Summary -->
+      <div class="card" style="margin-bottom: 24px;">
+        <h2><span class="icon">&#128202;</span> Budget Summary</h2>
+        <div class="result-row">
+          <span>Annual Take-Home</span>
+          <span class="val positive" id="r-budget-income">$0</span>
+        </div>
+        <div class="result-row indent">
+          <span>Annual Spending</span>
+          <span class="val" id="r-spend-annual-cat">$0</span>
+        </div>
+        <div class="result-row indent">
+          <span>Monthly Spending (&times;12)</span>
+          <span class="val" id="r-spend-monthly-cat">$0</span>
+        </div>
+        <div class="result-row indent">
+          <span>Weekly Spending (&times;52)</span>
+          <span class="val" id="r-spend-weekly-cat">$0</span>
+        </div>
+        <div class="result-row indent">
+          <span>Daily Spending (&times;365)</span>
+          <span class="val" id="r-spend-daily-cat">$0</span>
+        </div>
+        <div class="result-row total">
+          <span>Total Annual Spending</span>
+          <span class="val negative" id="r-total-spending">$0</span>
+        </div>
+        <div class="result-row total" style="border-top: 2px solid var(--green);">
+          <span id="r-remainder-label">Annual Savings</span>
+          <span class="val" id="r-remainder">$0</span>
+        </div>
+        <div class="result-row">
+          <span id="r-remainder-mo-label">Monthly Savings</span>
+          <span class="val" id="r-remainder-mo">$0</span>
+        </div>
+        <div class="result-row" style="margin-top: 8px;">
+          <span>Savings Rate</span>
+          <span class="val" id="r-savings-rate">0%</span>
+        </div>
+      </div>
+
+      <!-- Summary Stats -->
+      <div class="card">
+        <h2><span class="icon">&#9889;</span> At a Glance</h2>
+        <div class="summary-bar">
+          <div class="summary-stat">
+            <div class="label">Gross</div>
+            <div class="value neutral" id="s-gross">$0</div>
+            <div class="sub">annual</div>
+          </div>
+          <div class="summary-stat">
+            <div class="label">Taxes + Ded.</div>
+            <div class="value" style="color: var(--red);" id="s-taxes">$0</div>
+            <div class="sub" id="s-tax-pct">0%</div>
+          </div>
+          <div class="summary-stat">
+            <div class="label">Spending</div>
+            <div class="value" style="color: var(--orange);" id="s-spending">$0</div>
+            <div class="sub" id="s-spend-pct">0%</div>
+          </div>
+          <div class="summary-stat">
+            <div class="label">Savings</div>
+            <div class="value" id="s-savings">$0</div>
+            <div class="sub" id="s-save-pct">0%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <p>Tax brackets: 2024 IRS (Federal), NY State, NYC. Standard deduction applied. For estimation only — consult a tax professional.</p>
+  </footer>
+</div>
+
+<script src="tax-engine.js"></script>
+<script>
+// ─────────────────────────────────────────────────────────────
+// DOM Layer — reads inputs, delegates to TaxEngine, writes results
+// ─────────────────────────────────────────────────────────────
+
+var E = TaxEngine; // short alias
+
+// ── DOM Helpers ─────────────────────────────────────────────
+
+var $ = document.getElementById.bind(document);
+
+function readField(id) {
+  return E.parseInputValue($(id).value);
+}
+
+function setField(id, val) {
+  $(id).value = val.toLocaleString();
+}
+
+function setText(id, text) {
+  $(id).textContent = text;
+}
+
+// ── Input Gathering ─────────────────────────────────────────
+
+function gatherInputs() {
+  return {
+    salary: readField('salary'),
+    bonus: readField('bonus'),
+    otherIncome: readField('otherIncome'),
+    retirement: readField('retirement'),
+    insurance: readField('insurance'),
+    hsa: readField('hsa'),
+    otherDeductions: readField('otherDeductions'),
+    filing: $('filingStatus').value,
+  };
+}
+
+function gatherSpending() {
+  var spending = { annual: {}, monthly: {}, weekly: {}, daily: {} };
+  var inputs = document.querySelectorAll('input[data-freq][data-key]');
+  for (var i = 0; i < inputs.length; i++) {
+    var inp = inputs[i];
+    spending[inp.dataset.freq][inp.dataset.key] = E.parseInputValue(inp.value);
+  }
+  return spending;
+}
+
+// ── Result Rendering ────────────────────────────────────────
+
+function renderTaxResults(t) {
+  // Income
+  setText('r-salary', E.fmt(t.salary));
+  setText('r-bonus', E.fmt(t.bonus));
+  setText('r-other', E.fmt(t.otherIncome));
+  setText('r-gross', E.fmt(t.gross));
+
+  // Pre-tax
+  setText('r-401k', E.fmt(-t.retirement));
+  setText('r-ins', E.fmt(-t.insurance));
+  setText('r-hsa', E.fmt(-t.hsa));
+  setText('r-othded', E.fmt(-t.otherDed));
+  setText('r-taxable', E.fmt(t.taxableIncome));
+
+  // Taxes
+  setText('r-fed', E.fmt(-t.federal.tax));
+  setText('r-fed-rate', E.pct(t.federal.topRate));
+  setText('r-state', E.fmt(-t.state.tax));
+  setText('r-state-rate', E.pct(t.state.topRate));
+  setText('r-city', E.fmt(-t.city.tax));
+  setText('r-city-rate', E.pct(t.city.topRate));
+  setText('r-ss', E.fmt(-t.ssTax));
+  setText('r-med', E.fmt(-t.medicareTax));
+  setText('r-med-rate', t.gross > t.medicareThreshold ? '2.35%' : '1.45%');
+  setText('r-totaltax', E.fmt(-t.totalTax));
+  setText('r-effective-rate', E.pct(t.effectiveRate));
+
+  // Take-home
+  setText('r-takehome-annual', E.fmt(t.takeHome));
+  setText('r-takehome-monthly', E.fmt(t.takeHome / 12));
+  setText('r-takehome-biweekly', E.fmt(t.takeHome / 26));
+
+  // Tax bar chart
+  renderTaxBars(t);
+}
+
+function renderTaxBars(t) {
+  var maxTax = Math.max(t.federal.tax, t.state.tax, t.city.tax, t.ssTax, t.medicareTax, 1);
+  var barData = [
+    { label: 'Federal', value: t.federal.tax, cls: 'bar-federal' },
+    { label: 'NY State', value: t.state.tax, cls: 'bar-state' },
+    { label: 'NYC', value: t.city.tax, cls: 'bar-city' },
+    { label: 'Soc. Security', value: t.ssTax, cls: 'bar-fica' },
+    { label: 'Medicare', value: t.medicareTax, cls: 'bar-fica' },
+    { label: 'Health Ins.', value: t.insurance, cls: 'bar-insurance' },
+    { label: '401(k)', value: t.retirement, cls: 'bar-retirement' },
+  ];
+  var html = '';
+  for (var i = 0; i < barData.length; i++) {
+    var b = barData[i];
+    var w = Math.max(0, (b.value / maxTax) * 100);
+    html += '<div class="bar-row">' +
+      '<span class="bar-label">' + b.label + '</span>' +
+      '<div class="bar-track"><div class="bar-fill ' + b.cls + '" style="width:' + w + '%"></div></div>' +
+      '<span class="bar-value">' + E.fmt(b.value) + '</span>' +
+      '</div>';
+  }
+  $('tax-bars').innerHTML = html;
+}
+
+function renderSpendingSubtotals(s) {
+  setText('subtotal-annual', E.fmt(s.annual));
+  setText('subtotal-monthly', E.fmt(s.monthly));
+  setText('subtotal-monthly-annual', E.fmt(s.monthlyAnnual));
+  setText('subtotal-weekly', E.fmt(s.weekly));
+  setText('subtotal-weekly-annual', E.fmt(s.weeklyAnnual));
+  setText('subtotal-daily', E.fmt(s.daily));
+  setText('subtotal-daily-annual', E.fmt(s.dailyAnnual));
+}
+
+function renderBudgetSummary(budget) {
+  var t = budget.taxes;
+  var s = budget.spending;
+  var remainder = budget.remainder;
+  var savingsRate = budget.savingsRate;
+
+  setText('r-budget-income', E.fmt(t.takeHome));
+  setText('r-spend-annual-cat', E.fmt(s.annual));
+  setText('r-spend-monthly-cat', E.fmt(s.monthlyAnnual));
+  setText('r-spend-weekly-cat', E.fmt(s.weeklyAnnual));
+  setText('r-spend-daily-cat', E.fmt(s.dailyAnnual));
+  setText('r-total-spending', E.fmt(-s.totalAnnual));
+
+  setText('r-remainder', E.fmt(remainder));
+  $('r-remainder').className = 'val ' + (remainder >= 0 ? 'positive' : 'negative');
+  setText('r-remainder-label', remainder >= 0 ? 'Annual Savings' : 'Annual Deficit');
+
+  setText('r-remainder-mo', E.fmt(remainder / 12));
+  $('r-remainder-mo').className = 'val ' + (remainder >= 0 ? 'positive' : 'negative');
+  setText('r-remainder-mo-label', remainder >= 0 ? 'Monthly Savings' : 'Monthly Deficit');
+
+  var srEl = $('r-savings-rate');
+  srEl.textContent = E.pct(savingsRate);
+  srEl.className = 'val ' + (savingsRate >= 0.2 ? 'positive' : savingsRate >= 0 ? 'accent' : 'negative');
+
+  // At a glance
+  setText('s-gross', E.fmtk(t.gross));
+  setText('s-taxes', E.fmtk(t.totalDeductions));
+  setText('s-tax-pct', t.gross > 0 ? E.pct(t.totalDeductions / t.gross) + ' of gross' : '0%');
+  setText('s-spending', E.fmtk(s.totalAnnual));
+  setText('s-spend-pct', t.takeHome > 0 ? E.pct(s.totalAnnual / t.takeHome) + ' of net' : '0%');
+  setText('s-savings', E.fmtk(remainder));
+  $('s-savings').className = 'value ' + (remainder >= 0 ? 'surplus' : 'deficit');
+  setText('s-save-pct', t.takeHome > 0 ? E.pct(remainder / t.takeHome) + ' of net' : '0%');
+}
+
+// ── Main Orchestrator ───────────────────────────────────────
+
+function recalculate() {
+  var inputs = gatherInputs();
+  var spending = gatherSpending();
+  var budget = E.computeBudget(inputs, spending);
+
+  renderTaxResults(budget.taxes);
+  renderSpendingSubtotals(budget.spending);
+  renderBudgetSummary(budget);
+}
+
+// ── Input Formatting ────────────────────────────────────────
+
+function formatAndCalc(el) {
+  var raw = el.value.replace(/[^0-9.]/g, '');
+  if (raw === '' || raw === '.') {
+    el.value = raw;
+  } else {
+    var parts = raw.split('.');
+    parts[0] = parseInt(parts[0] || '0').toLocaleString();
+    el.value = parts.join('.');
+  }
+
+  // Update slider base value if this is a spending input at 1.0x
+  if (el.dataset && el.dataset.freq && el.dataset.key) {
+    var k = el.dataset.freq + ':' + el.dataset.key;
+    var v = E.parseInputValue(el.value);
+    var sliderName = E.getSliderForItem(el.dataset.freq, el.dataset.key);
+    if (sliderName) {
+      var slider = $('slider-' + sliderName);
+      if (slider && parseFloat(slider.value) === 3) {
+        baseSpendingValues[k] = v;
+      }
+    } else {
+      baseSpendingValues[k] = v;
+    }
+    updateSliderImpacts();
+  }
+
+  recalculate();
+}
+
+// ── Slider DOM Logic ────────────────────────────────────────
+
+var baseSpendingValues = {};
+
+function onSlider(el) {
+  var sliderName = el.id.replace('slider-', '');
+  var mult = E.sliderToMultiplier(parseFloat(el.value));
+
+  setText('mult-' + sliderName, mult.toFixed(1) + 'x');
+
+  var result = E.applySliderMultiplier(sliderName, mult, baseSpendingValues);
+
+  // Write scaled values back to spending inputs
+  for (var baseKey in result.scaledValues) {
+    var parts = baseKey.split(':');
+    var inp = document.querySelector('input[data-freq="' + parts[0] + '"][data-key="' + parts[1] + '"]');
+    if (inp) inp.value = result.scaledValues[baseKey].toLocaleString();
+  }
+
+  var impactEl = $('impact-' + sliderName);
+  if (impactEl) impactEl.textContent = E.fmtk(result.annualImpact) + '/yr';
+
+  recalculate();
+}
+
+function resetSliders() {
+  var names = Object.keys(E.SLIDER_MAPPING);
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i];
+    var slider = $('slider-' + name);
+    if (slider) slider.value = 3;
+    var mult = $('mult-' + name);
+    if (mult) mult.textContent = '1.0x';
+    var impact = $('impact-' + name);
+    if (impact) impact.textContent = '';
+  }
+}
+
+function updateSliderImpacts() {
+  var names = Object.keys(E.SLIDER_MAPPING);
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i];
+    var items = E.SLIDER_MAPPING[name];
+    var annualImpact = 0;
+    for (var j = 0; j < items.length; j++) {
+      var inp = document.querySelector(
+        'input[data-freq="' + items[j].freq + '"][data-key="' + items[j].key + '"]'
+      );
+      if (!inp) continue;
+      annualImpact += E.parseInputValue(inp.value) * (E.FREQ_TO_ANNUAL[items[j].freq] || 1);
+    }
+    var impactEl = $('impact-' + name);
+    if (impactEl) {
+      impactEl.textContent = annualImpact > 0 ? E.fmtk(annualImpact) + '/yr' : '';
+    }
+  }
+}
+
+// ── Preset Application ──────────────────────────────────────
+
+function applyPreset(name, btnEl) {
+  var p = E.PRESETS[name];
+  if (!p) return;
+
+  document.querySelectorAll('.preset-btn').forEach(function(b) { b.classList.remove('active'); });
+  if (btnEl) btnEl.classList.add('active');
+
+  setField('salary', p.salary);
+  setField('bonus', p.bonus);
+  setField('otherIncome', p.otherIncome);
+  setField('retirement', p.retirement);
+  setField('insurance', p.insurance);
+  setField('hsa', p.hsa);
+  setField('otherDeductions', p.otherDeductions);
+
+  // Set spending inputs and capture base values
+  baseSpendingValues = {};
+  var freqs = Object.keys(p.spending);
+  for (var i = 0; i < freqs.length; i++) {
+    var freq = freqs[i];
+    var keys = Object.keys(p.spending[freq]);
+    for (var j = 0; j < keys.length; j++) {
+      var key = keys[j];
+      var val = p.spending[freq][key];
+      var inp = document.querySelector('input[data-freq="' + freq + '"][data-key="' + key + '"]');
+      if (inp) inp.value = val.toLocaleString();
+      baseSpendingValues[freq + ':' + key] = val;
+    }
+  }
+
+  resetSliders();
+  updateSliderImpacts();
+  recalculate();
+}
+
+// ── Init ────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', recalculate);
+</script>
+</body>
+</html>
