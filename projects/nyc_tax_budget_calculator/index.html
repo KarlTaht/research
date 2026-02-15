@@ -156,8 +156,6 @@ header p {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
-  cursor: pointer;
-  user-select: none;
 }
 
 .spending-header h3 {
@@ -390,71 +388,6 @@ footer {
   color: var(--text-muted);
 }
 
-/* Custom spending row */
-.custom-row {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.custom-row input[type="text"] {
-  flex: 1;
-  padding: 6px 8px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-size: 13px;
-  font-family: inherit;
-}
-
-.custom-row input[type="number"] {
-  width: 100px;
-  padding: 6px 8px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-size: 14px;
-  font-family: inherit;
-  text-align: right;
-}
-
-.custom-row input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.btn-add {
-  padding: 6px 12px;
-  background: var(--accent-dim);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.btn-add:hover {
-  background: var(--accent);
-}
-
-.btn-remove {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 16px;
-  padding: 0 4px;
-  line-height: 1;
-}
-
-.btn-remove:hover {
-  color: var(--red);
-}
-
 /* Priority sliders */
 .sliders-grid {
   display: grid;
@@ -492,12 +425,6 @@ footer {
   font-weight: 600;
   padding: 1px 8px;
   border-radius: 8px;
-  font-variant-numeric: tabular-nums;
-}
-
-.slider-label-row .slider-impact {
-  font-size: 11px;
-  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -617,12 +544,12 @@ footer {
   <div class="card full-width" style="margin-bottom: 24px;">
     <h2><span class="icon">&#9881;</span> Quick Presets</h2>
     <div class="presets">
-      <button class="preset-btn" onclick="applyPreset('junior')">Junior ($150K)</button>
-      <button class="preset-btn" onclick="applyPreset('mid')">Mid-Level ($225K)</button>
-      <button class="preset-btn" onclick="applyPreset('senior')">Senior ($350K)</button>
-      <button class="preset-btn" onclick="applyPreset('staff')">Staff/Principal ($500K)</button>
-      <button class="preset-btn" onclick="applyPreset('director')">Director ($750K)</button>
-      <button class="preset-btn" onclick="applyPreset('exec')">Executive ($1.2M)</button>
+      <button class="preset-btn" onclick="applyPreset('junior', this)">Junior ($150K)</button>
+      <button class="preset-btn" onclick="applyPreset('mid', this)">Mid-Level ($225K)</button>
+      <button class="preset-btn" onclick="applyPreset('senior', this)">Senior ($350K)</button>
+      <button class="preset-btn" onclick="applyPreset('staff', this)">Staff/Principal ($500K)</button>
+      <button class="preset-btn" onclick="applyPreset('director', this)">Director ($750K)</button>
+      <button class="preset-btn" onclick="applyPreset('exec', this)">Executive ($1.2M)</button>
     </div>
   </div>
 
@@ -1102,103 +1029,194 @@ footer {
   </footer>
 </div>
 
+<script src="tax-engine.js"></script>
 <script>
-// ──────────────────────────────────────────
-// Tax brackets (2024)
-// ──────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// DOM Layer — reads inputs, delegates to TaxEngine, writes results
+// ─────────────────────────────────────────────────────────────
 
-const FEDERAL_SINGLE = [
-  [11600, 0.10],
-  [47150 - 11600, 0.12],
-  [100525 - 47150, 0.22],
-  [191950 - 100525, 0.24],
-  [243725 - 191950, 0.32],
-  [609350 - 243725, 0.35],
-  [Infinity, 0.37],
-];
+var E = TaxEngine; // short alias
 
-const FEDERAL_MARRIED = [
-  [23200, 0.10],
-  [94300 - 23200, 0.12],
-  [201050 - 94300, 0.22],
-  [383900 - 201050, 0.24],
-  [487450 - 383900, 0.32],
-  [731200 - 487450, 0.35],
-  [Infinity, 0.37],
-];
+// ── DOM Helpers ─────────────────────────────────────────────
 
-const NY_STATE = [
-  [8500, 0.04],
-  [11700 - 8500, 0.045],
-  [13900 - 11700, 0.0525],
-  [80650 - 13900, 0.055],
-  [215400 - 80650, 0.06],
-  [1077550 - 215400, 0.0685],
-  [5000000 - 1077550, 0.0965],
-  [25000000 - 5000000, 0.103],
-  [Infinity, 0.109],
-];
+var $ = document.getElementById.bind(document);
 
-const NYC_TAX = [
-  [12000, 0.03078],
-  [25000 - 12000, 0.03762],
-  [50000 - 25000, 0.03819],
-  [Infinity, 0.03876],
-];
-
-const STANDARD_DEDUCTION_SINGLE = 14600;
-const STANDARD_DEDUCTION_MARRIED = 29200;
-const SS_RATE = 0.062;
-const SS_WAGE_BASE = 168600;
-const MEDICARE_RATE = 0.0145;
-const MEDICARE_ADDITIONAL_RATE = 0.009;
-const MEDICARE_THRESHOLD_SINGLE = 200000;
-const MEDICARE_THRESHOLD_MARRIED = 250000;
-
-// ──────────────────────────────────────────
-// Utility
-// ──────────────────────────────────────────
-
-function parseNum(id) {
-  const el = typeof id === 'string' ? document.getElementById(id) : id;
-  if (!el) return 0;
-  return parseFloat(el.value.replace(/[^0-9.]/g, '')) || 0;
+function readField(id) {
+  return E.parseInputValue($(id).value);
 }
 
-function fmt(n) {
-  if (n < 0) return '-$' + Math.abs(Math.round(n)).toLocaleString();
-  return '$' + Math.round(n).toLocaleString();
+function setField(id, val) {
+  $(id).value = val.toLocaleString();
 }
 
-function fmtk(n) {
-  const abs = Math.abs(n);
-  if (abs >= 1000000) return (n < 0 ? '-' : '') + '$' + (abs / 1000000).toFixed(1) + 'M';
-  if (abs >= 1000) return (n < 0 ? '-' : '') + '$' + (abs / 1000).toFixed(0) + 'K';
-  return fmt(n);
+function setText(id, text) {
+  $(id).textContent = text;
 }
 
-function pct(n) {
-  return (n * 100).toFixed(1) + '%';
+// ── Input Gathering ─────────────────────────────────────────
+
+function gatherInputs() {
+  return {
+    salary: readField('salary'),
+    bonus: readField('bonus'),
+    otherIncome: readField('otherIncome'),
+    retirement: readField('retirement'),
+    insurance: readField('insurance'),
+    hsa: readField('hsa'),
+    otherDeductions: readField('otherDeductions'),
+    filing: $('filingStatus').value,
+  };
 }
+
+function gatherSpending() {
+  var spending = { annual: {}, monthly: {}, weekly: {}, daily: {} };
+  var inputs = document.querySelectorAll('input[data-freq][data-key]');
+  for (var i = 0; i < inputs.length; i++) {
+    var inp = inputs[i];
+    spending[inp.dataset.freq][inp.dataset.key] = E.parseInputValue(inp.value);
+  }
+  return spending;
+}
+
+// ── Result Rendering ────────────────────────────────────────
+
+function renderTaxResults(t) {
+  // Income
+  setText('r-salary', E.fmt(t.salary));
+  setText('r-bonus', E.fmt(t.bonus));
+  setText('r-other', E.fmt(t.otherIncome));
+  setText('r-gross', E.fmt(t.gross));
+
+  // Pre-tax
+  setText('r-401k', E.fmt(-t.retirement));
+  setText('r-ins', E.fmt(-t.insurance));
+  setText('r-hsa', E.fmt(-t.hsa));
+  setText('r-othded', E.fmt(-t.otherDed));
+  setText('r-taxable', E.fmt(t.taxableIncome));
+
+  // Taxes
+  setText('r-fed', E.fmt(-t.federal.tax));
+  setText('r-fed-rate', E.pct(t.federal.topRate));
+  setText('r-state', E.fmt(-t.state.tax));
+  setText('r-state-rate', E.pct(t.state.topRate));
+  setText('r-city', E.fmt(-t.city.tax));
+  setText('r-city-rate', E.pct(t.city.topRate));
+  setText('r-ss', E.fmt(-t.ssTax));
+  setText('r-med', E.fmt(-t.medicareTax));
+  setText('r-med-rate', t.gross > t.medicareThreshold ? '2.35%' : '1.45%');
+  setText('r-totaltax', E.fmt(-t.totalTax));
+  setText('r-effective-rate', E.pct(t.effectiveRate));
+
+  // Take-home
+  setText('r-takehome-annual', E.fmt(t.takeHome));
+  setText('r-takehome-monthly', E.fmt(t.takeHome / 12));
+  setText('r-takehome-biweekly', E.fmt(t.takeHome / 26));
+
+  // Tax bar chart
+  renderTaxBars(t);
+}
+
+function renderTaxBars(t) {
+  var maxTax = Math.max(t.federal.tax, t.state.tax, t.city.tax, t.ssTax, t.medicareTax, 1);
+  var barData = [
+    { label: 'Federal', value: t.federal.tax, cls: 'bar-federal' },
+    { label: 'NY State', value: t.state.tax, cls: 'bar-state' },
+    { label: 'NYC', value: t.city.tax, cls: 'bar-city' },
+    { label: 'Soc. Security', value: t.ssTax, cls: 'bar-fica' },
+    { label: 'Medicare', value: t.medicareTax, cls: 'bar-fica' },
+    { label: 'Health Ins.', value: t.insurance, cls: 'bar-insurance' },
+    { label: '401(k)', value: t.retirement, cls: 'bar-retirement' },
+  ];
+  var html = '';
+  for (var i = 0; i < barData.length; i++) {
+    var b = barData[i];
+    var w = Math.max(0, (b.value / maxTax) * 100);
+    html += '<div class="bar-row">' +
+      '<span class="bar-label">' + b.label + '</span>' +
+      '<div class="bar-track"><div class="bar-fill ' + b.cls + '" style="width:' + w + '%"></div></div>' +
+      '<span class="bar-value">' + E.fmt(b.value) + '</span>' +
+      '</div>';
+  }
+  $('tax-bars').innerHTML = html;
+}
+
+function renderSpendingSubtotals(s) {
+  setText('subtotal-annual', E.fmt(s.annual));
+  setText('subtotal-monthly', E.fmt(s.monthly));
+  setText('subtotal-monthly-annual', E.fmt(s.monthlyAnnual));
+  setText('subtotal-weekly', E.fmt(s.weekly));
+  setText('subtotal-weekly-annual', E.fmt(s.weeklyAnnual));
+  setText('subtotal-daily', E.fmt(s.daily));
+  setText('subtotal-daily-annual', E.fmt(s.dailyAnnual));
+}
+
+function renderBudgetSummary(budget) {
+  var t = budget.taxes;
+  var s = budget.spending;
+  var remainder = budget.remainder;
+  var savingsRate = budget.savingsRate;
+
+  setText('r-budget-income', E.fmt(t.takeHome));
+  setText('r-spend-annual-cat', E.fmt(s.annual));
+  setText('r-spend-monthly-cat', E.fmt(s.monthlyAnnual));
+  setText('r-spend-weekly-cat', E.fmt(s.weeklyAnnual));
+  setText('r-spend-daily-cat', E.fmt(s.dailyAnnual));
+  setText('r-total-spending', E.fmt(-s.totalAnnual));
+
+  setText('r-remainder', E.fmt(remainder));
+  $('r-remainder').className = 'val ' + (remainder >= 0 ? 'positive' : 'negative');
+  setText('r-remainder-label', remainder >= 0 ? 'Annual Savings' : 'Annual Deficit');
+
+  setText('r-remainder-mo', E.fmt(remainder / 12));
+  $('r-remainder-mo').className = 'val ' + (remainder >= 0 ? 'positive' : 'negative');
+  setText('r-remainder-mo-label', remainder >= 0 ? 'Monthly Savings' : 'Monthly Deficit');
+
+  var srEl = $('r-savings-rate');
+  srEl.textContent = E.pct(savingsRate);
+  srEl.className = 'val ' + (savingsRate >= 0.2 ? 'positive' : savingsRate >= 0 ? 'accent' : 'negative');
+
+  // At a glance
+  setText('s-gross', E.fmtk(t.gross));
+  setText('s-taxes', E.fmtk(t.totalDeductions));
+  setText('s-tax-pct', t.gross > 0 ? E.pct(t.totalDeductions / t.gross) + ' of gross' : '0%');
+  setText('s-spending', E.fmtk(s.totalAnnual));
+  setText('s-spend-pct', t.takeHome > 0 ? E.pct(s.totalAnnual / t.takeHome) + ' of net' : '0%');
+  setText('s-savings', E.fmtk(remainder));
+  $('s-savings').className = 'value ' + (remainder >= 0 ? 'surplus' : 'deficit');
+  setText('s-save-pct', t.takeHome > 0 ? E.pct(remainder / t.takeHome) + ' of net' : '0%');
+}
+
+// ── Main Orchestrator ───────────────────────────────────────
+
+function recalculate() {
+  var inputs = gatherInputs();
+  var spending = gatherSpending();
+  var budget = E.computeBudget(inputs, spending);
+
+  renderTaxResults(budget.taxes);
+  renderSpendingSubtotals(budget.spending);
+  renderBudgetSummary(budget);
+}
+
+// ── Input Formatting ────────────────────────────────────────
 
 function formatAndCalc(el) {
-  // Format number with commas as user types
-  const raw = el.value.replace(/[^0-9.]/g, '');
+  var raw = el.value.replace(/[^0-9.]/g, '');
   if (raw === '' || raw === '.') {
     el.value = raw;
   } else {
-    const parts = raw.split('.');
+    var parts = raw.split('.');
     parts[0] = parseInt(parts[0] || '0').toLocaleString();
     el.value = parts.join('.');
   }
-  // If this is a spending input, update its base value for slider scaling
+
+  // Update slider base value if this is a spending input at 1.0x
   if (el.dataset && el.dataset.freq && el.dataset.key) {
-    const k = el.dataset.freq + ':' + el.dataset.key;
-    const v = parseFloat(el.value.replace(/[^0-9.]/g, '')) || 0;
-    // Only update base if the corresponding slider is at 1.0x (center)
-    const sliderName = getSliderForItem(el.dataset.freq, el.dataset.key);
+    var k = el.dataset.freq + ':' + el.dataset.key;
+    var v = E.parseInputValue(el.value);
+    var sliderName = E.getSliderForItem(el.dataset.freq, el.dataset.key);
     if (sliderName) {
-      const slider = document.getElementById('slider-' + sliderName);
+      var slider = $('slider-' + sliderName);
       if (slider && parseFloat(slider.value) === 3) {
         baseSpendingValues[k] = v;
       }
@@ -1207,269 +1225,77 @@ function formatAndCalc(el) {
     }
     updateSliderImpacts();
   }
+
   recalculate();
 }
 
-function getSliderForItem(freq, key) {
-  for (const [name, items] of Object.entries(SLIDER_MAPPING)) {
-    for (const item of items) {
-      if (item.freq === freq && item.key === key) return name;
+// ── Slider DOM Logic ────────────────────────────────────────
+
+var baseSpendingValues = {};
+
+function onSlider(el) {
+  var sliderName = el.id.replace('slider-', '');
+  var mult = E.sliderToMultiplier(parseFloat(el.value));
+
+  setText('mult-' + sliderName, mult.toFixed(1) + 'x');
+
+  var result = E.applySliderMultiplier(sliderName, mult, baseSpendingValues);
+
+  // Write scaled values back to spending inputs
+  for (var baseKey in result.scaledValues) {
+    var parts = baseKey.split(':');
+    var inp = document.querySelector('input[data-freq="' + parts[0] + '"][data-key="' + parts[1] + '"]');
+    if (inp) inp.value = result.scaledValues[baseKey].toLocaleString();
+  }
+
+  var impactEl = $('impact-' + sliderName);
+  if (impactEl) impactEl.textContent = E.fmtk(result.annualImpact) + '/yr';
+
+  recalculate();
+}
+
+function resetSliders() {
+  var names = Object.keys(E.SLIDER_MAPPING);
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i];
+    var slider = $('slider-' + name);
+    if (slider) slider.value = 3;
+    var mult = $('mult-' + name);
+    if (mult) mult.textContent = '1.0x';
+    var impact = $('impact-' + name);
+    if (impact) impact.textContent = '';
+  }
+}
+
+function updateSliderImpacts() {
+  var names = Object.keys(E.SLIDER_MAPPING);
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i];
+    var items = E.SLIDER_MAPPING[name];
+    var annualImpact = 0;
+    for (var j = 0; j < items.length; j++) {
+      var inp = document.querySelector(
+        'input[data-freq="' + items[j].freq + '"][data-key="' + items[j].key + '"]'
+      );
+      if (!inp) continue;
+      annualImpact += E.parseInputValue(inp.value) * (E.FREQ_TO_ANNUAL[items[j].freq] || 1);
+    }
+    var impactEl = $('impact-' + name);
+    if (impactEl) {
+      impactEl.textContent = annualImpact > 0 ? E.fmtk(annualImpact) + '/yr' : '';
     }
   }
-  return null;
 }
 
-function calcBrackets(income, brackets) {
-  let tax = 0;
-  let remaining = income;
-  let topRate = 0;
-  for (const [size, rate] of brackets) {
-    if (remaining <= 0) break;
-    const taxable = Math.min(remaining, size);
-    tax += taxable * rate;
-    topRate = rate;
-    remaining -= taxable;
-  }
-  return { tax, topRate };
-}
+// ── Preset Application ──────────────────────────────────────
 
-// ──────────────────────────────────────────
-// Main calculation
-// ──────────────────────────────────────────
-
-function recalculate() {
-  const salary = parseNum('salary');
-  const bonus = parseNum('bonus');
-  const otherIncome = parseNum('otherIncome');
-  const retirement = parseNum('retirement');
-  const insurance = parseNum('insurance');
-  const hsa = parseNum('hsa');
-  const otherDed = parseNum('otherDeductions');
-  const filing = document.getElementById('filingStatus').value;
-
-  const gross = salary + bonus + otherIncome;
-  const totalPreTax = retirement + insurance + hsa + otherDed;
-
-  // FICA is on gross (before 401k for SS/Medicare)
-  const ssIncome = Math.min(gross, SS_WAGE_BASE);
-  const ssTax = ssIncome * SS_RATE;
-
-  const medicareThreshold = filing === 'married' ? MEDICARE_THRESHOLD_MARRIED : MEDICARE_THRESHOLD_SINGLE;
-  let medicareTax = gross * MEDICARE_RATE;
-  if (gross > medicareThreshold) {
-    medicareTax += (gross - medicareThreshold) * MEDICARE_ADDITIONAL_RATE;
-  }
-
-  // Taxable income for income taxes (after pre-tax deductions and standard deduction)
-  const standardDed = filing === 'married' ? STANDARD_DEDUCTION_MARRIED : STANDARD_DEDUCTION_SINGLE;
-  const federalBrackets = filing === 'married' ? FEDERAL_MARRIED : FEDERAL_SINGLE;
-  const taxableIncome = Math.max(0, gross - totalPreTax - standardDed);
-
-  // NY State and NYC tax on income after pre-tax deductions but using NY standard deduction ($8,000 single / $16,050 married)
-  const nyStandardDed = filing === 'married' ? 16050 : 8000;
-  const stateTaxableIncome = Math.max(0, gross - totalPreTax - nyStandardDed);
-
-  const federal = calcBrackets(taxableIncome, federalBrackets);
-  const state = calcBrackets(stateTaxableIncome, NY_STATE);
-  const city = calcBrackets(stateTaxableIncome, NYC_TAX);
-
-  const totalTax = federal.tax + state.tax + city.tax + ssTax + medicareTax;
-  const totalDeductions = totalTax + totalPreTax;
-  const takeHome = gross - totalDeductions;
-
-  // ── Update income display ──
-  document.getElementById('r-salary').textContent = fmt(salary);
-  document.getElementById('r-bonus').textContent = fmt(bonus);
-  document.getElementById('r-other').textContent = fmt(otherIncome);
-  document.getElementById('r-gross').textContent = fmt(gross);
-
-  // ── Pre-tax deductions ──
-  document.getElementById('r-401k').textContent = fmt(-retirement);
-  document.getElementById('r-ins').textContent = fmt(-insurance);
-  document.getElementById('r-hsa').textContent = fmt(-hsa);
-  document.getElementById('r-othded').textContent = fmt(-otherDed);
-  document.getElementById('r-taxable').textContent = fmt(taxableIncome);
-
-  // ── Taxes ──
-  document.getElementById('r-fed').textContent = fmt(-federal.tax);
-  document.getElementById('r-fed-rate').textContent = pct(federal.topRate);
-  document.getElementById('r-state').textContent = fmt(-state.tax);
-  document.getElementById('r-state-rate').textContent = pct(state.topRate);
-  document.getElementById('r-city').textContent = fmt(-city.tax);
-  document.getElementById('r-city-rate').textContent = pct(city.topRate);
-  document.getElementById('r-ss').textContent = fmt(-ssTax);
-  document.getElementById('r-med').textContent = fmt(-medicareTax);
-  document.getElementById('r-med-rate').textContent = gross > medicareThreshold ? '2.35%' : '1.45%';
-  document.getElementById('r-totaltax').textContent = fmt(-totalTax);
-
-  // Effective rate
-  const effectiveRate = gross > 0 ? totalTax / gross : 0;
-  document.getElementById('r-effective-rate').textContent = pct(effectiveRate);
-
-  // ── Tax bar chart ──
-  const maxTax = Math.max(federal.tax, state.tax, city.tax, ssTax, medicareTax, 1);
-  const barData = [
-    { label: 'Federal', value: federal.tax, cls: 'bar-federal' },
-    { label: 'NY State', value: state.tax, cls: 'bar-state' },
-    { label: 'NYC', value: city.tax, cls: 'bar-city' },
-    { label: 'Soc. Security', value: ssTax, cls: 'bar-fica' },
-    { label: 'Medicare', value: medicareTax, cls: 'bar-fica' },
-    { label: 'Health Ins.', value: insurance, cls: 'bar-insurance' },
-    { label: '401(k)', value: retirement, cls: 'bar-retirement' },
-  ];
-  let barHTML = '';
-  for (const b of barData) {
-    const w = Math.max(0, (b.value / maxTax) * 100);
-    barHTML += `<div class="bar-row">
-      <span class="bar-label">${b.label}</span>
-      <div class="bar-track"><div class="bar-fill ${b.cls}" style="width:${w}%"></div></div>
-      <span class="bar-value">${fmt(b.value)}</span>
-    </div>`;
-  }
-  document.getElementById('tax-bars').innerHTML = barHTML;
-
-  // ── Take-home ──
-  document.getElementById('r-takehome-annual').textContent = fmt(takeHome);
-  document.getElementById('r-takehome-monthly').textContent = fmt(takeHome / 12);
-  document.getElementById('r-takehome-biweekly').textContent = fmt(takeHome / 26);
-
-  // ── Spending ──
-  const spendAnnual = sumSpending('annual', 1);
-  const spendMonthly = sumSpending('monthly', 1);
-  const spendWeekly = sumSpending('weekly', 1);
-  const spendDaily = sumSpending('daily', 1);
-
-  const spendAnnualYear = spendAnnual;
-  const spendMonthlyYear = spendMonthly * 12;
-  const spendWeeklyYear = spendWeekly * 52;
-  const spendDailyYear = spendDaily * 365;
-  const totalSpending = spendAnnualYear + spendMonthlyYear + spendWeeklyYear + spendDailyYear;
-
-  document.getElementById('subtotal-annual').textContent = fmt(spendAnnual);
-  document.getElementById('subtotal-monthly').textContent = fmt(spendMonthly);
-  document.getElementById('subtotal-monthly-annual').textContent = fmt(spendMonthlyYear);
-  document.getElementById('subtotal-weekly').textContent = fmt(spendWeekly);
-  document.getElementById('subtotal-weekly-annual').textContent = fmt(spendWeeklyYear);
-  document.getElementById('subtotal-daily').textContent = fmt(spendDaily);
-  document.getElementById('subtotal-daily-annual').textContent = fmt(spendDailyYear);
-
-  // Budget summary
-  document.getElementById('r-budget-income').textContent = fmt(takeHome);
-  document.getElementById('r-spend-annual-cat').textContent = fmt(spendAnnualYear);
-  document.getElementById('r-spend-monthly-cat').textContent = fmt(spendMonthlyYear);
-  document.getElementById('r-spend-weekly-cat').textContent = fmt(spendWeeklyYear);
-  document.getElementById('r-spend-daily-cat').textContent = fmt(spendDailyYear);
-  document.getElementById('r-total-spending').textContent = fmt(-totalSpending);
-
-  const remainder = takeHome - totalSpending;
-  document.getElementById('r-remainder').textContent = fmt(remainder);
-  document.getElementById('r-remainder').className = 'val ' + (remainder >= 0 ? 'positive' : 'negative');
-  document.getElementById('r-remainder-label').textContent = remainder >= 0 ? 'Annual Savings' : 'Annual Deficit';
-  document.getElementById('r-remainder-mo').textContent = fmt(remainder / 12);
-  document.getElementById('r-remainder-mo').className = 'val ' + (remainder >= 0 ? 'positive' : 'negative');
-  document.getElementById('r-remainder-mo-label').textContent = remainder >= 0 ? 'Monthly Savings' : 'Monthly Deficit';
-
-  const savingsRate = takeHome > 0 ? remainder / takeHome : 0;
-  const srEl = document.getElementById('r-savings-rate');
-  srEl.textContent = pct(savingsRate);
-  srEl.className = 'val ' + (savingsRate >= 0.2 ? 'positive' : savingsRate >= 0 ? 'accent' : 'negative');
-
-  // ── At a glance ──
-  document.getElementById('s-gross').textContent = fmtk(gross);
-  document.getElementById('s-taxes').textContent = fmtk(totalDeductions);
-  document.getElementById('s-tax-pct').textContent = gross > 0 ? pct(totalDeductions / gross) + ' of gross' : '0%';
-  document.getElementById('s-spending').textContent = fmtk(totalSpending);
-  document.getElementById('s-spend-pct').textContent = takeHome > 0 ? pct(totalSpending / takeHome) + ' of net' : '0%';
-  document.getElementById('s-savings').textContent = fmtk(remainder);
-  document.getElementById('s-savings').className = 'value ' + (remainder >= 0 ? 'surplus' : 'deficit');
-  document.getElementById('s-save-pct').textContent = takeHome > 0 ? pct(remainder / takeHome) + ' of net' : '0%';
-}
-
-function sumSpending(freq, multiplier) {
-  let total = 0;
-  const inputs = document.querySelectorAll(`input[data-freq="${freq}"]`);
-  for (const inp of inputs) {
-    total += parseFloat(inp.value.replace(/[^0-9.]/g, '')) || 0;
-  }
-  return total * multiplier;
-}
-
-// ──────────────────────────────────────────
-// Presets
-// ──────────────────────────────────────────
-
-const PRESETS = {
-  junior: {
-    salary: 140000, bonus: 10000, otherIncome: 0,
-    retirement: 10000, insurance: 2400, hsa: 0, otherDeductions: 0,
-    spending: {
-      annual: { vacations: 3000, flights: 1000, furniture: 500, clothing: 1500, electronics: 800, gifts: 500, medical: 500, taxpro: 0 },
-      monthly: { rent: 2200, utilities: 100, internet: 60, phone: 85, streaming: 35, gym: 50, groceries: 450, laundry: 60, subscriptions: 20, pet: 0, rentersins: 25, therapy: 0 },
-      weekly: { transit: 33, dining: 80, bars: 40, entertainment: 30, rideshare: 20, takeout: 40 },
-      daily: { coffee: 5, lunch: 14, snacks: 3, tips: 2 },
-    },
-  },
-  mid: {
-    salary: 190000, bonus: 35000, otherIncome: 0,
-    retirement: 23500, insurance: 3000, hsa: 0, otherDeductions: 0,
-    spending: {
-      annual: { vacations: 5000, flights: 2000, furniture: 1500, clothing: 2500, electronics: 1200, gifts: 1000, medical: 800, taxpro: 300 },
-      monthly: { rent: 2800, utilities: 130, internet: 70, phone: 85, streaming: 50, gym: 100, groceries: 550, laundry: 70, subscriptions: 40, pet: 0, rentersins: 30, therapy: 0 },
-      weekly: { transit: 33, dining: 120, bars: 60, entertainment: 40, rideshare: 35, takeout: 50 },
-      daily: { coffee: 6, lunch: 16, snacks: 4, tips: 3 },
-    },
-  },
-  senior: {
-    salary: 280000, bonus: 70000, otherIncome: 0,
-    retirement: 23500, insurance: 3600, hsa: 4150, otherDeductions: 0,
-    spending: {
-      annual: { vacations: 8000, flights: 3000, furniture: 2500, clothing: 4000, electronics: 2000, gifts: 2000, medical: 1000, taxpro: 500 },
-      monthly: { rent: 3500, utilities: 150, internet: 70, phone: 85, streaming: 60, gym: 150, groceries: 650, laundry: 80, subscriptions: 60, pet: 100, rentersins: 30, therapy: 200 },
-      weekly: { transit: 33, dining: 180, bars: 80, entertainment: 60, rideshare: 50, takeout: 70 },
-      daily: { coffee: 7, lunch: 18, snacks: 5, tips: 4 },
-    },
-  },
-  staff: {
-    salary: 350000, bonus: 150000, otherIncome: 0,
-    retirement: 23500, insurance: 3600, hsa: 4150, otherDeductions: 1200,
-    spending: {
-      annual: { vacations: 15000, flights: 5000, furniture: 4000, clothing: 6000, electronics: 3000, gifts: 3000, medical: 1500, taxpro: 1000 },
-      monthly: { rent: 4500, utilities: 180, internet: 80, phone: 100, streaming: 70, gym: 200, groceries: 800, laundry: 100, subscriptions: 80, pet: 150, rentersins: 35, therapy: 300 },
-      weekly: { transit: 33, dining: 250, bars: 100, entertainment: 80, rideshare: 80, takeout: 100 },
-      daily: { coffee: 8, lunch: 20, snacks: 6, tips: 5 },
-    },
-  },
-  director: {
-    salary: 500000, bonus: 250000, otherIncome: 0,
-    retirement: 23500, insurance: 4800, hsa: 4150, otherDeductions: 3600,
-    spending: {
-      annual: { vacations: 25000, flights: 8000, furniture: 5000, clothing: 8000, electronics: 4000, gifts: 5000, medical: 2000, taxpro: 2000 },
-      monthly: { rent: 6000, utilities: 200, internet: 100, phone: 120, streaming: 80, gym: 250, groceries: 1000, laundry: 120, subscriptions: 100, pet: 200, rentersins: 40, therapy: 400 },
-      weekly: { transit: 0, dining: 350, bars: 150, entertainment: 120, rideshare: 150, takeout: 120 },
-      daily: { coffee: 10, lunch: 25, snacks: 8, tips: 7 },
-    },
-  },
-  exec: {
-    salary: 700000, bonus: 500000, otherIncome: 0,
-    retirement: 23500, insurance: 6000, hsa: 4150, otherDeductions: 6000,
-    spending: {
-      annual: { vacations: 40000, flights: 15000, furniture: 8000, clothing: 12000, electronics: 5000, gifts: 8000, medical: 3000, taxpro: 5000 },
-      monthly: { rent: 8500, utilities: 250, internet: 120, phone: 150, streaming: 100, gym: 350, groceries: 1400, laundry: 150, subscriptions: 150, pet: 300, rentersins: 50, therapy: 500 },
-      weekly: { transit: 0, dining: 500, bars: 200, entertainment: 200, rideshare: 250, takeout: 150 },
-      daily: { coffee: 12, lunch: 30, snacks: 10, tips: 10 },
-    },
-  },
-};
-
-function applyPreset(name) {
-  const p = PRESETS[name];
+function applyPreset(name, btnEl) {
+  var p = E.PRESETS[name];
   if (!p) return;
 
-  // Remove active from all preset buttons
-  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
+  document.querySelectorAll('.preset-btn').forEach(function(b) { b.classList.remove('active'); });
+  if (btnEl) btnEl.classList.add('active');
 
-  // Set income fields
   setField('salary', p.salary);
   setField('bonus', p.bonus);
   setField('otherIncome', p.otherIncome);
@@ -1478,129 +1304,28 @@ function applyPreset(name) {
   setField('hsa', p.hsa);
   setField('otherDeductions', p.otherDeductions);
 
-  // Set spending and capture base values
+  // Set spending inputs and capture base values
   baseSpendingValues = {};
-  for (const [freq, items] of Object.entries(p.spending)) {
-    for (const [key, val] of Object.entries(items)) {
-      const inp = document.querySelector(`input[data-freq="${freq}"][data-key="${key}"]`);
+  var freqs = Object.keys(p.spending);
+  for (var i = 0; i < freqs.length; i++) {
+    var freq = freqs[i];
+    var keys = Object.keys(p.spending[freq]);
+    for (var j = 0; j < keys.length; j++) {
+      var key = keys[j];
+      var val = p.spending[freq][key];
+      var inp = document.querySelector('input[data-freq="' + freq + '"][data-key="' + key + '"]');
       if (inp) inp.value = val.toLocaleString();
       baseSpendingValues[freq + ':' + key] = val;
     }
   }
 
-  // Reset sliders to center (1.0x)
   resetSliders();
   updateSliderImpacts();
   recalculate();
 }
 
-function setField(id, val) {
-  document.getElementById(id).value = val.toLocaleString();
-}
+// ── Init ────────────────────────────────────────────────────
 
-// ──────────────────────────────────────────
-// Lifestyle Priority Sliders
-// ──────────────────────────────────────────
-
-// Mapping: slider name -> list of { freq, key } spending items it controls
-const SLIDER_MAPPING = {
-  housing:   [{ freq:'monthly', key:'rent' }, { freq:'monthly', key:'utilities' }, { freq:'monthly', key:'rentersins' }, { freq:'monthly', key:'laundry' }, { freq:'monthly', key:'internet' }, { freq:'monthly', key:'phone' }],
-  food:      [{ freq:'monthly', key:'groceries' }, { freq:'weekly', key:'dining' }, { freq:'weekly', key:'takeout' }, { freq:'daily', key:'lunch' }, { freq:'daily', key:'coffee' }, { freq:'daily', key:'snacks' }, { freq:'daily', key:'tips' }],
-  nightlife: [{ freq:'weekly', key:'bars' }, { freq:'weekly', key:'entertainment' }, { freq:'weekly', key:'rideshare' }],
-  travel:    [{ freq:'annual', key:'vacations' }, { freq:'annual', key:'flights' }],
-  health:    [{ freq:'monthly', key:'gym' }, { freq:'monthly', key:'therapy' }, { freq:'annual', key:'medical' }],
-  shopping:  [{ freq:'annual', key:'clothing' }, { freq:'annual', key:'electronics' }, { freq:'annual', key:'furniture' }, { freq:'annual', key:'gifts' }],
-};
-
-// Base spending values: captured when preset is applied or manually set
-// Key format: "freq:key" -> base number value
-let baseSpendingValues = {};
-
-function captureBaseValues() {
-  // Capture current spending input values as base values
-  document.querySelectorAll('input[data-freq][data-key]').forEach(inp => {
-    const k = inp.dataset.freq + ':' + inp.dataset.key;
-    const v = parseFloat(inp.value.replace(/[^0-9.]/g, '')) || 0;
-    if (v > 0) baseSpendingValues[k] = v;
-  });
-}
-
-function sliderToMultiplier(val) {
-  // val 1-5, center at 3 = 1.0x
-  // Uses exponential curve: pow(1.8, val-3)
-  // 1 -> 0.31x, 2 -> 0.56x, 3 -> 1.0x, 4 -> 1.8x, 5 -> 3.24x
-  return Math.pow(1.8, val - 3);
-}
-
-function onSlider(el) {
-  const sliderName = el.id.replace('slider-', '');
-  const val = parseFloat(el.value);
-  const mult = sliderToMultiplier(val);
-
-  // Update multiplier badge
-  document.getElementById('mult-' + sliderName).textContent = mult.toFixed(1) + 'x';
-
-  // Apply multiplier to mapped spending items
-  const items = SLIDER_MAPPING[sliderName] || [];
-  let annualImpact = 0;
-  for (const { freq, key } of items) {
-    const baseKey = freq + ':' + key;
-    const base = baseSpendingValues[baseKey];
-    if (base === undefined) continue;
-    const scaled = Math.round(base * mult);
-    const inp = document.querySelector(`input[data-freq="${freq}"][data-key="${key}"]`);
-    if (inp) {
-      inp.value = scaled.toLocaleString();
-      // Compute annual impact
-      const freqMult = freq === 'annual' ? 1 : freq === 'monthly' ? 12 : freq === 'weekly' ? 52 : 365;
-      annualImpact += scaled * freqMult;
-    }
-  }
-
-  // Show annual impact under slider
-  const impactEl = document.getElementById('impact-' + sliderName);
-  if (impactEl) {
-    impactEl.textContent = fmtk(annualImpact) + '/yr';
-  }
-
-  recalculate();
-}
-
-function resetSliders() {
-  for (const name of Object.keys(SLIDER_MAPPING)) {
-    const slider = document.getElementById('slider-' + name);
-    if (slider) slider.value = 3;
-    const mult = document.getElementById('mult-' + name);
-    if (mult) mult.textContent = '1.0x';
-    const impact = document.getElementById('impact-' + name);
-    if (impact) impact.textContent = '';
-  }
-}
-
-function updateSliderImpacts() {
-  // Refresh the annual impact display for all sliders at current values
-  for (const name of Object.keys(SLIDER_MAPPING)) {
-    const items = SLIDER_MAPPING[name] || [];
-    let annualImpact = 0;
-    for (const { freq, key } of items) {
-      const inp = document.querySelector(`input[data-freq="${freq}"][data-key="${key}"]`);
-      if (!inp) continue;
-      const val = parseFloat(inp.value.replace(/[^0-9.]/g, '')) || 0;
-      const freqMult = freq === 'annual' ? 1 : freq === 'monthly' ? 12 : freq === 'weekly' ? 52 : 365;
-      annualImpact += val * freqMult;
-    }
-    const impactEl = document.getElementById('impact-' + name);
-    if (impactEl) {
-      impactEl.textContent = annualImpact > 0 ? fmtk(annualImpact) + '/yr' : '';
-    }
-  }
-}
-
-// ──────────────────────────────────────────
-// Init
-// ──────────────────────────────────────────
-
-// Run initial calculation on load
 document.addEventListener('DOMContentLoaded', recalculate);
 </script>
 </body>
